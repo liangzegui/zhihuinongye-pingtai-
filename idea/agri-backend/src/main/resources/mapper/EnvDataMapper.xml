@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.agribackend.mapper.EnvDataMapper">
+    <!-- 查询每个传感器的最新数据 -->
+    <select id="getLatestDataBySensor" resultType="com.example.agribackend.entity.EnvDataEntity">
+        SELECT
+            ed.*
+        FROM
+            t_env_data ed
+                INNER JOIN (
+                SELECT
+                    sensor_id,
+                    MAX(collect_time) AS latest_time
+                FROM
+                    t_env_data
+                GROUP BY
+                    sensor_id
+            ) sub ON ed.sensor_id = sub.sensor_id AND ed.collect_time = sub.latest_time
+    </select>
+</mapper>
