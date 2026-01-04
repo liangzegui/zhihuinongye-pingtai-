@@ -4,6 +4,7 @@ import com.example.agribackend.entity.User;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Insert;
+import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface UserMapper {
@@ -14,4 +15,8 @@ public interface UserMapper {
     // 插入新用户
     @Insert("INSERT INTO user (username, password, role, create_time) VALUES (#{username}, #{password}, #{role}, #{createTime})")
     int insert(User user);
+
+    // 更新用户密码
+    @Update("UPDATE user SET password = #{newPassword} WHERE username = #{username}")
+    int updatePassword(String username, String newPassword);
 }

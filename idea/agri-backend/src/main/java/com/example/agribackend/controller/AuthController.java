@@ -1,8 +1,10 @@
 package com.example.agribackend.controller;
 
+import com.example.agribackend.service.CaptchaService;
 import com.example.agribackend.service.UserService;
 import com.example.agribackend.utils.CaptchaUtils;
 import com.example.agribackend.utils.JwtUtils;
+import com.example.agribackend.utils.PasswordValidator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,12 +25,22 @@ public class AuthController {
     @Autowired
     private UserService userService;
 
-    // 生成验证码接口（原有逻辑不变）
+    @Autowired
+    private CaptchaService captchaService;
+
+    // 生成验证码接口（使用 captchaKey 关联验证码，解决 Session 不同步问题）
     @GetMapping("/captcha")
-    public void getCaptcha(jakarta.servlet.http.HttpServletResponse response, HttpSession session) throws Exception {
+    public void getCaptcha(
+            jakarta.servlet.http.HttpServletResponse response,
+            @RequestParam(value = "key", required = false) String captchaKey) throws Exception {
         String captchaText = CaptchaUtils.createCaptchaImage(response);
-        session.setAttribute("sessionCaptcha", captchaText);
-        logger.info("生成验证码：{}，存储到Session", captchaText);
+        // 如果提供了 captchaKey，使用内存缓存存储验证码
+        if (captchaKey != null && !captchaKey.isEmpty()) {
+            captchaService.storeCaptcha(captchaKey, captchaText);
+            logger.info("生成验证码：{}，存储到缓存，key：{}", captchaText, captchaKey);
+        } else {
+            logger.info("生成验证码：{}（无captchaKey，未存储）", captchaText);
+        }
     }
 
     // 登录接口（修改Token生成逻辑，调用JwtUtils.createJWT）
@@ -59,18 +71,17 @@ public class AuthController {
         return result;
     }
 
-    // 注册接口（原有逻辑不变，无需修改）
+    // 注册接口（使用 captchaKey 验证验证码）
     @PostMapping("/register")
     public Map<String, Object> register(
-            @RequestBody Map<String, String> registerData,
-            HttpSession session) {
-        // 你的原有注册代码...（无需修改）
+            @RequestBody Map<String, String> registerData) {
         logger.info("开始处理注册请求，参数：{}", registerData);
         Map<String, Object> result = new HashMap<>();
         String username = registerData.get("username");
         String password = registerData.get("password");
         String role = registerData.getOrDefault("role", "user");
         String userCaptcha = registerData.get("captcha");
+        String captchaKey = registerData.get("captchaKey"); // 获取验证码关联的 key
 
         // 1. 验证码非空校验
         if (userCaptcha == null || userCaptcha.trim().isEmpty()) {
@@ -79,32 +90,32 @@ public class AuthController {
             result.put("message", "请输入验证码");
             return result;
         }
-        // 2. 验证码过期校验
-        String sessionCaptcha = (String) session.getAttribute("sessionCaptcha");
-        if (sessionCaptcha == null) {
-            logger.warn("Session中未找到验证码，判定为已过期");
+        // 2. 获取缓存中的验证码（同时从缓存中移除，验证码只能使用一次）
+        String cachedCaptcha = captchaService.getAndRemoveCaptcha(captchaKey);
+        if (cachedCaptcha == null) {
+            logger.warn("缓存中未找到验证码，判定为已过期，captchaKey：{}", captchaKey);
             result.put("code", 400);
             result.put("message", "验证码已过期，请刷新重试");
             return result;
         }
         // 3. 验证码正确性校验
-        if (!sessionCaptcha.equalsIgnoreCase(userCaptcha.trim())) {
-            logger.warn("验证码错误，用户输入：{}，Session中存储：{}", userCaptcha, sessionCaptcha);
+        if (!cachedCaptcha.equalsIgnoreCase(userCaptcha.trim())) {
+            logger.warn("验证码错误，用户输入：{}，缓存中存储：{}", userCaptcha, cachedCaptcha);
             result.put("code", 400);
             result.put("message", "验证码错误");
             return result;
         }
-        // 4. 密码长度校验（新增：确保密码至少6位）
-        if (password == null || password.length() < 6) {
-            logger.warn("密码长度不足，输入长度：{}", password != null ? password.length() : 0);
+        // 4. 密码格式校验
+        String pwdError = PasswordValidator.validate(password);
+        if (pwdError != null) {
+            logger.warn("密码格式不符合要求：{}", pwdError);
             result.put("code", 400);
-            result.put("message", "密码长度不能少于6位");
+            result.put("message", pwdError);
             return result;
         }
         // 5. 执行注册逻辑
         boolean registerSuccess = userService.register(username, password, role);
         if (registerSuccess) {
-            session.removeAttribute("sessionCaptcha");
             logger.info("用户 [{}] 以角色 [{}] 注册成功", username, role);
             result.put("code", 200);
             result.put("message", "注册成功");
@@ -112,6 +123,107 @@ public class AuthController {
             logger.warn("用户名 [{}] 已存在", username);
             result.put("code", 400);
             result.put("message", "用户名已存在");
+        }
+        return result;
+    }
+
+    // 修改密码接口
+    @PostMapping("/update-pwd")
+    public Map<String, Object> updatePassword(
+            @RequestBody Map<String, String> pwdData,
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        Map<String, Object> result = new HashMap<>();
+
+        // 从Token中获取用户名
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            result.put("code", 401);
+            result.put("message", "未登录或Token无效");
+            return result;
+        }
+
+        String token = authHeader.substring(7);
+        String username;
+        try {
+            io.jsonwebtoken.Claims claims = JwtUtils.parseJWT(token);
+            username = (String) claims.get("username");
+        } catch (Exception e) {
+            result.put("code", 401);
+            result.put("message", "Token已过期，请重新登录");
+            return result;
+        }
+
+        if (username == null) {
+            result.put("code", 401);
+            result.put("message", "Token无效");
+            return result;
+        }
+
+        String oldPwd = pwdData.get("oldPwd");
+        String newPwd = pwdData.get("newPwd");
+
+        // 验证新密码格式
+        String pwdError = PasswordValidator.validate(newPwd);
+        if (pwdError != null) {
+            result.put("code", 400);
+            result.put("message", pwdError);
+            return result;
+        }
+
+        boolean success = userService.updatePassword(username, oldPwd, newPwd);
+        if (success) {
+            logger.info("用户 [{}] 修改密码成功", username);
+            result.put("code", 200);
+            result.put("message", "密码修改成功");
+        } else {
+            logger.warn("用户 [{}] 修改密码失败：旧密码错误", username);
+            result.put("code", 400);
+            result.put("message", "旧密码错误");
+        }
+        return result;
+    }
+
+    // 获取用户信息接口
+    @GetMapping("/user/profile")
+    public Map<String, Object> getUserProfile(
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        Map<String, Object> result = new HashMap<>();
+
+        // 从Token中获取用户名
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            result.put("code", 401);
+            result.put("message", "未登录或Token无效");
+            return result;
+        }
+
+        String token = authHeader.substring(7);
+        String username;
+        try {
+            io.jsonwebtoken.Claims claims = JwtUtils.parseJWT(token);
+            username = (String) claims.get("username");
+        } catch (Exception e) {
+            result.put("code", 401);
+            result.put("message", "Token已过期，请重新登录");
+            return result;
+        }
+
+        if (username == null) {
+            result.put("code", 401);
+            result.put("message", "Token无效");
+            return result;
+        }
+
+        com.example.agribackend.entity.User user = userService.getUserByUsername(username);
+        if (user != null) {
+            result.put("code", 200);
+            result.put("message", "获取成功");
+            Map<String, Object> userData = new HashMap<>();
+            userData.put("username", user.getUsername());
+            userData.put("role", user.getRole());
+            userData.put("createTime", user.getCreateTime());
+            result.put("data", userData);
+        } else {
+            result.put("code", 404);
+            result.put("message", "用户不存在");
         }
         return result;
     }

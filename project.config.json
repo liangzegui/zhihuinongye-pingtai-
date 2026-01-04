@@ -1,0 +1,14 @@
+{
+  "backend": {
+    "port": 8080,
+    "host": "localhost"
+  },
+  "frontend": {
+    "port": 8081
+  },
+  "database": {
+    "host": "localhost",
+    "port": 3306,
+    "name": "agri_db"
+  }
+}
