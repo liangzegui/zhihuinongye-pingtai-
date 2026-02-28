@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 160" width="48" height="80">
+  <!-- 温度计外壳 -->
+  <path d="M 40 10 L 60 10 Q 70 10 70 20 L 70 100 Q 70 120 50 130 Q 30 120 30 100 L 30 20 Q 30 10 40 10" fill="none" stroke="#999" stroke-width="3" stroke-linecap="round"/>
+  
+  <!-- 温度计玻璃内部 -->
+  <path d="M 43 15 L 57 15 Q 65 15 65 22 L 65 100 Q 65 116 50 125 Q 35 116 35 100 L 35 22 Q 35 15 43 15" fill="#e8f4f8" stroke="none"/>
+  
+  <!-- 红色液体 -->
+  <path d="M 44 80 L 56 80 L 56 100 Q 56 114 50 121 Q 44 114 44 100 Z" fill="#f56c6c"/>
+  
+  <!-- 温度刻度线 -->
+  <line x1="25" y1="30" x2="20" y2="30" stroke="#666" stroke-width="1.5"/>
+  <line x1="25" y1="45" x2="20" y2="45" stroke="#666" stroke-width="1.5"/>
+  <line x1="25" y1="60" x2="20" y2="60" stroke="#666" stroke-width="1.5"/>
+  <line x1="25" y1="75" x2="20" y2="75" stroke="#666" stroke-width="1.5"/>
+  <line x1="25" y1="90" x2="20" y2="90" stroke="#666" stroke-width="1.5"/>
+  
+  <!-- 右侧标记线 -->
+  <line x1="75" y1="30" x2="80" y2="30" stroke="#409eff" stroke-width="2"/>
+  <line x1="75" y1="45" x2="82" y2="45" stroke="#409eff" stroke-width="2"/>
+  <line x1="75" y1="60" x2="80" y2="60" stroke="#409eff" stroke-width="2"/>
+  <line x1="75" y1="75" x2="82" y2="75" stroke="#409eff" stroke-width="2"/>
+  <line x1="75" y1="90" x2="80" y2="90" stroke="#409eff" stroke-width="2"/>
+</svg>

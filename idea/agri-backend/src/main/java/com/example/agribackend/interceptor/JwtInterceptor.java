@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
@@ -19,10 +20,14 @@ public class JwtInterceptor implements HandlerInterceptor {
     private static final String TOKEN_PREFIX = "Bearer ";
 
     @Override
-    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+    public boolean preHandle(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response,
+            @NonNull Object handler) throws Exception {
+        String requestURI = request.getRequestURI();
+        logger.info("拦截请求: {} {}", request.getMethod(), requestURI);
+        
         String tokenHeader = request.getHeader(TOKEN_HEADER);
         if (tokenHeader == null || !tokenHeader.startsWith(TOKEN_PREFIX)) {
-            logger.warn("请求头缺少有效Token：{}", tokenHeader);
+            logger.warn("请求路径: {} - 缺少有效Token: {}", requestURI, tokenHeader);
             returnJson(response, "{\"code\":401,\"message\":\"未登录，请先登录\"}");
             return false;
         }

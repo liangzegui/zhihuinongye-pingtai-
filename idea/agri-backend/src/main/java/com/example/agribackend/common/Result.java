@@ -14,6 +14,13 @@ public class Result<T> {
         return result;
     }
 
+    /** 仅返回成功消息，不带数据体 */
+    public static Result<Void> ok(String msg) {
+        Result<Void> result = new Result<>();
+        result.setMsg(msg);
+        return result;
+    }
+
     public static <T> Result<T> error(int code, String msg) {
         Result<T> result = new Result<>();
         result.setCode(code);

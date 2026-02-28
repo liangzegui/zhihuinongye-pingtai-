@@ -32,4 +32,11 @@ public interface IoTDAService {
      * @return 设备状态信息
      */
     Map<String, Object> getDeviceStatus();
+
+    /**
+     * 获取缓存的传感器数据
+     * 
+     * @return 传感器数据（包括temperature, humidity, soilMoisture, soilAdc等）
+     */
+    Map<String, Object> getCachedSensorData();
 }

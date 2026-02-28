@@ -1,0 +1,44 @@
+# ==================== Java 后端 ====================
+# Maven 构建产物
+idea/agri-backend/target/
+idea/agri-backend/.mvn/wrapper/maven-wrapper.jar
+
+# IDE 文件
+.idea/
+*.iml
+.vscode/
+*.code-workspace
+
+# Java 日志 & crash 文件
+hs_err_pid*.log
+replay_pid*.log
+*.hprof
+run.log
+run.err
+
+# ==================== Vue 前端 ====================
+vue/agri-frontend/node_modules/
+vue/agri-frontend/dist/
+vue/agri-frontend/.env.local
+vue/agri-frontend/.env.*.local
+
+# 前端日志
+vue/agri-frontend/npm-debug.log*
+vue/agri-frontend/yarn-debug.log*
+vue/agri-frontend/yarn-error.log*
+vue/agri-frontend/pnpm-debug.log*
+
+# ==================== ESP32 固件 ====================
+ESP32 demo/.pio/
+ESP32 demo/.vscode/
+
+# ==================== 系统文件 ====================
+.DS_Store
+Thumbs.db
+Desktop.ini
+~$*
+
+# ==================== 环境变量 ====================
+.env
+.env.local
+!.env.example

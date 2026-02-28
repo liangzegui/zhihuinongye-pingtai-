@@ -3,12 +3,15 @@ package com.example.agribackend.controller;
 import com.example.agribackend.common.Result;
 import com.example.agribackend.entity.EnvDataEntity;
 import com.example.agribackend.mapper.EnvDataMapper;
+import com.example.agribackend.service.impl.IoTDAServiceImpl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * 华为云IoTDA数据转发Webhook接收器
@@ -30,6 +33,9 @@ public class IoTDAWebhookController {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private IoTDAServiceImpl ioTDAService;
 
     /**
      * 接收华为云IoTDA数据转发的Webhook
@@ -95,12 +101,38 @@ public class IoTDAWebhookController {
                     envData.setCo2(properties.get("eco2").asInt());
                 }
 
+                envData.setSaveUsername("IoTDA设备上报");
                 envData.setCollectTime(LocalDateTime.now());
 
                 // 保存到数据库
                 envDataMapper.insert(envData);
 
-                System.out.println("====== 数据已保存到数据库 ======");
+                // 通过WebSocket广播实时数据
+                Map<String, Object> sensorData = new HashMap<>();
+                sensorData.put("temp", envData.getTemperature());
+                sensorData.put("humi", envData.getHumidity());
+                sensorData.put("soilMoisture", envData.getSoilMoisture());
+                sensorData.put("lightLux", envData.getLightIntensity());
+                sensorData.put("eco2", envData.getCo2());
+
+                // 提取设备状态
+                if (properties.has("pump")) {
+                    sensorData.put("pump", properties.get("pump").asBoolean());
+                }
+                if (properties.has("fan")) {
+                    sensorData.put("fan", properties.get("fan").asBoolean());
+                }
+                if (properties.has("light")) {
+                    sensorData.put("light", properties.get("light").asBoolean());
+                }
+                if (properties.has("manual")) {
+                    sensorData.put("manual", properties.get("manual").asBoolean());
+                }
+
+                // 更新IoTDA服务缓存并广播
+                ioTDAService.updateDeviceStatus(sensorData);
+
+                System.out.println("====== 数据已保存并广播 ======");
                 System.out.println("温度: " + envData.getTemperature() + "℃");
                 System.out.println("湿度: " + envData.getHumidity() + "%");
                 System.out.println("土壤湿度: " + envData.getSoilMoisture() + "%");
@@ -115,7 +147,7 @@ public class IoTDAWebhookController {
         } catch (Exception e) {
             System.err.println("处理IoTDA数据失败: " + e.getMessage());
             e.printStackTrace();
-            return Result.error("处理失败: " + e.getMessage());
+            return Result.error(500, "处理失败: " + e.getMessage());
         }
     }
 
@@ -152,6 +184,7 @@ public class IoTDAWebhookController {
                 envData.setCo2(root.get("eco2").asInt());
             }
 
+            envData.setSaveUsername("ESP32直传");
             envData.setCollectTime(LocalDateTime.now());
             envDataMapper.insert(envData);
 
@@ -159,7 +192,7 @@ public class IoTDAWebhookController {
 
         } catch (Exception e) {
             System.err.println("处理直接上报数据失败: " + e.getMessage());
-            return Result.error("处理失败: " + e.getMessage());
+            return Result.error(500, "处理失败: " + e.getMessage());
         }
     }
 

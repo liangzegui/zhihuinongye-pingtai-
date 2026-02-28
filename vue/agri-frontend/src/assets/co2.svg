@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="48" height="48">
+  <!-- 大泡泡 -->
+  <circle cx="40" cy="30" r="26" fill="#87CEEB" opacity="0.8"/>
+  
+  <!-- 中泡泡 -->
+  <circle cx="65" cy="45" r="20" fill="#ADD8E6" opacity="0.9"/>
+  
+  <!-- 小泡泡 -->
+  <circle cx="75" cy="25" r="12" fill="#87CEEB" opacity="0.85"/>
+  
+  <!-- 微小泡泡 -->
+  <circle cx="45" cy="70" r="8" fill="#87CEEB" opacity="0.8"/>
+  
+  <!-- 光泽效果 -->
+  <circle cx="35" cy="22" r="8" fill="white" opacity="0.4"/>
+  <circle cx="60" cy="38" r="6" fill="white" opacity="0.3"/>
+</svg>
