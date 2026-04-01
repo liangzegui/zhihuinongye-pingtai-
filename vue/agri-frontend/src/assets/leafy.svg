@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="leafGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#4ade80;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#166534;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="leafGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#22c55e;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#15803d;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- 中心叶片 -->
+  <path d="M32 6 C32 6 42 18 42 32 C42 46 32 58 32 58 C32 58 22 46 22 32 C22 18 32 6 32 6Z"
+        fill="url(#leafGrad)" opacity="0.9"/>
+  <!-- 中心叶脉 -->
+  <path d="M32 10 L32 54" stroke="#166534" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
+  <path d="M32 20 L26 26" stroke="#166534" stroke-width="1" stroke-linecap="round" opacity="0.4"/>
+  <path d="M32 20 L38 26" stroke="#166534" stroke-width="1" stroke-linecap="round" opacity="0.4"/>
+  <path d="M32 32 L24 38" stroke="#166534" stroke-width="1" stroke-linecap="round" opacity="0.4"/>
+  <path d="M32 32 L40 38" stroke="#166534" stroke-width="1" stroke-linecap="round" opacity="0.4"/>
+  <!-- 左侧小叶 -->
+  <path d="M18 20 C18 20 24 26 24 34 C24 42 18 48 18 48 C18 48 12 42 12 34 C12 26 18 20 18 20Z"
+        fill="url(#leafGrad2)" opacity="0.7" transform="rotate(-15 18 34)"/>
+  <!-- 右侧小叶 -->
+  <path d="M46 20 C46 20 52 26 52 34 C52 42 46 48 46 48 C46 48 40 42 40 34 C40 26 46 20 46 20Z"
+        fill="url(#leafGrad2)" opacity="0.7" transform="rotate(15 46 34)"/>
+  <!-- 水滴装饰 -->
+  <circle cx="28" cy="24" r="2" fill="#ffffff" opacity="0.5"/>
+  <circle cx="36" cy="40" r="1.5" fill="#ffffff" opacity="0.4"/>
+</svg>

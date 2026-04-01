@@ -3,10 +3,13 @@ package com.example.agribackend.controller;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.agribackend.common.Result;
+import com.example.agribackend.dto.BatchIdsRequest;
 import com.example.agribackend.entity.ControlHistoryEntity;
 import com.example.agribackend.mapper.ControlHistoryMapper;
+import com.example.agribackend.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -14,6 +17,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -27,6 +31,9 @@ public class ControlHistoryController {
 
     @Autowired
     private ControlHistoryMapper controlHistoryMapper;
+
+    @Autowired
+    private UserService userService;
 
     /**
      * 分页查询控制历史
@@ -96,7 +103,49 @@ public class ControlHistoryController {
         return Result.success(stats);
     }
 
+    // ==================== 管理员操作 ====================
+
+    /** 批量删除控制记录 */
+    @DeleteMapping("/batch-delete")
+    @Operation(summary = "批量删除控制历史记录")
+    public Result<Map<String, Object>> batchDelete(@RequestBody BatchIdsRequest body,
+            HttpServletRequest httpRequest) {
+        if (!isAdminRequest(httpRequest)) {
+            return Result.error(403, "仅管理员可执行此操作");
+        }
+        List<Integer> ids = body.getIds();
+        if (ids == null || ids.isEmpty()) {
+            return Result.error(400, "请选择要删除的记录");
+        }
+        int count = controlHistoryMapper.deleteByIds(ids);
+        Map<String, Object> data = new HashMap<>();
+        data.put("deletedCount", count);
+        return Result.success(data);
+    }
+
+    /** 清空全部控制记录 */
+    @DeleteMapping("/clear-all")
+    @Operation(summary = "清空全部控制历史记录")
+    public Result<Map<String, Object>> clearAll(HttpServletRequest httpRequest) {
+        if (!isAdminRequest(httpRequest)) {
+            return Result.error(403, "仅管理员可执行此操作");
+        }
+        int count = Math.toIntExact(controlHistoryMapper.selectCount(null));
+        controlHistoryMapper.delete(null);
+        Map<String, Object> data = new HashMap<>();
+        data.put("clearedCount", count);
+        return Result.success(data);
+    }
+
     // ==================== 工具方法 ====================
+
+    private boolean isAdminRequest(HttpServletRequest request) {
+        Object loginUsername = request.getAttribute("loginUsername");
+        if (loginUsername == null) {
+            return false;
+        }
+        return userService.isAdmin(String.valueOf(loginUsername));
+    }
 
     private LocalDateTime resolveStartTime(String timeRange) {
         LocalDateTime now = LocalDateTime.now();

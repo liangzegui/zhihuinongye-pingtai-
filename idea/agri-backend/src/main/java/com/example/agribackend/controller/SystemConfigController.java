@@ -2,7 +2,6 @@ package com.example.agribackend.controller;
 
 import com.example.agribackend.common.Result;
 import com.example.agribackend.service.DataAutoSaveService;
-import com.example.agribackend.service.UserService;
 import com.example.agribackend.service.impl.Esp32BridgeServiceImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,9 +28,6 @@ public class SystemConfigController {
 
     @Autowired
     private DataAutoSaveService dataAutoSaveService;
-
-    @Autowired
-    private UserService userService;
 
     /**
      * 获取当前ESP32配置
@@ -100,9 +96,6 @@ public class SystemConfigController {
      */
     @GetMapping("/autosave")
     public Result<Map<String, Object>> getAutoSaveConfig(HttpServletRequest request) {
-        if (!isAdminRequest(request)) {
-            return Result.error(403, "仅管理员可访问");
-        }
 
         Map<String, Object> config = new HashMap<>();
         config.put("enabled", dataAutoSaveService.isEnabled());
@@ -125,10 +118,7 @@ public class SystemConfigController {
      */
     @PostMapping("/autosave")
     public Result<Map<String, Object>> updateAutoSaveConfig(@RequestBody Map<String, Object> configData,
-                                                             HttpServletRequest request) {
-        if (!isAdminRequest(request)) {
-            return Result.error(403, "仅管理员可访问");
-        }
+            HttpServletRequest request) {
 
         String loginUsername = String.valueOf(request.getAttribute("loginUsername"));
 
@@ -158,9 +148,6 @@ public class SystemConfigController {
      */
     @PostMapping("/autosave/trigger")
     public Result<Map<String, Object>> triggerSaveData(HttpServletRequest request) {
-        if (!isAdminRequest(request)) {
-            return Result.error(403, "仅管理员可访问");
-        }
 
         String loginUsername = String.valueOf(request.getAttribute("loginUsername"));
         boolean success = dataAutoSaveService.manualSave(loginUsername);
@@ -177,26 +164,15 @@ public class SystemConfigController {
      */
     @PostMapping("/autosave/save")
     public Result<Map<String, Object>> saveWithData(@RequestBody Map<String, Object> data,
-                                                    HttpServletRequest request) {
-        if (!isAdminRequest(request)) {
-            return Result.error(403, "仅管理员可访问");
-        }
+            HttpServletRequest request) {
 
         String loginUsername = String.valueOf(request.getAttribute("loginUsername"));
         boolean success = dataAutoSaveService.saveWithData(data, loginUsername);
 
         Map<String, Object> result = new HashMap<>();
         result.put("success", success);
-        result.put("message", success ? "数据保存成功" : "数据保存失败：设备离线或数据无效");
+        result.put("message", success ? "数据保存成功" : "保存失败：设备可能离线或传感器数据异常（多项指标为0）");
 
         return Result.success(result);
-    }
-
-    private boolean isAdminRequest(HttpServletRequest request) {
-        Object loginUsername = request.getAttribute("loginUsername");
-        if (loginUsername == null) {
-            return false;
-        }
-        return userService.isAdmin(String.valueOf(loginUsername));
     }
 }

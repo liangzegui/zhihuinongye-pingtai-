@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 服务端登录尝试管理（内存级，单实例有效）
@@ -21,8 +22,11 @@ public class LoginAttemptService {
 
     /** 判断该用户是否处于锁定状态 */
     public boolean isLocked(String username) {
+        if (username == null)
+            return false;
         AttemptInfo info = attempts.get(username);
-        if (info == null) return false;
+        if (info == null)
+            return false;
         if (info.lockUntil != null && System.currentTimeMillis() < info.lockUntil) {
             return true;
         }
@@ -35,28 +39,35 @@ public class LoginAttemptService {
 
     /** 记录一次登录失败 */
     public void recordFailure(String username) {
+        if (username == null)
+            return;
         AttemptInfo info = attempts.computeIfAbsent(username, k -> new AttemptInfo());
-        info.count++;
-        if (info.count >= MAX_ATTEMPTS) {
+        int currentCount = info.count.incrementAndGet();
+        if (currentCount >= MAX_ATTEMPTS) {
             info.lockUntil = System.currentTimeMillis() + LOCK_DURATION_MS;
-            logger.warn("用户 [{}] 登录失败达 {} 次，账户锁定 10 分钟", username, info.count);
+            logger.warn("用户 [{}] 登录失败达 {} 次，账户锁定 10 分钟", username, currentCount);
         }
     }
 
     /** 登录成功后重置计数 */
     public void resetAttempts(String username) {
+        if (username == null)
+            return;
         attempts.remove(username);
     }
 
     /** 获取剩余允许尝试次数 */
     public int getRemainingAttempts(String username) {
+        if (username == null)
+            return MAX_ATTEMPTS;
         AttemptInfo info = attempts.get(username);
-        if (info == null) return MAX_ATTEMPTS;
-        return Math.max(0, MAX_ATTEMPTS - info.count);
+        if (info == null)
+            return MAX_ATTEMPTS;
+        return Math.max(0, MAX_ATTEMPTS - info.count.get());
     }
 
     private static class AttemptInfo {
-        int count = 0;
-        Long lockUntil = null;
+        final AtomicInteger count = new AtomicInteger(0);
+        volatile Long lockUntil = null;
     }
 }

@@ -9,12 +9,12 @@ public class EnvDataDTO {
     private Double temperature;
     private Double humidity;
     private Double soilMoisture;
-    private Double soilAdc; // 原始ADC值(0-4095)
+    private Integer soilAdc; // 原始ADC值(0-4095)
     private Integer lightIntensity;
     private Integer co2;
-    
+
     // 数据来源标记
-    private String dataSource;  // "device" = ESP32设备实时数据, "database" = 数据库历史数据
+    private String dataSource; // "device" = ESP32设备实时数据, "database" = 数据库历史数据
     private Boolean isRealTime; // true = 实时数据, false = 历史数据
     private String collectTime; // 数据采集时间
 }

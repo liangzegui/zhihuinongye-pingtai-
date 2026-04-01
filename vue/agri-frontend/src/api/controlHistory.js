@@ -18,3 +18,18 @@ export const getControlHistory = (params = {}) => {
 export const getControlStats = () => {
   return request.get('/api/control-history/stats')
 }
+
+/**
+ * 批量删除控制记录（管理员）
+ * @param {Number[]} ids - 控制记录ID数组
+ */
+export const batchDeleteControlHistory = (ids) => {
+  return request.delete('/api/control-history/batch-delete', { data: { ids } })
+}
+
+/**
+ * 清空全部控制记录（管理员）
+ */
+export const clearAllControlHistory = () => {
+  return request.delete('/api/control-history/clear-all')
+}

@@ -14,8 +14,17 @@ public interface WarningService {
 
     /** 分页 + 筛选查询警告日志 */
     Map<String, Object> getWarningLogsPaged(int page, int pageSize,
-                                            String warningType, Integer status, String timeRange);
+            String warningType, Integer status, String timeRange);
 
     /** 标记为已处理 */
     boolean markAsHandled(Integer id);
+
+    /** 批量标记为已处理 */
+    int batchMarkAsHandled(List<Integer> ids);
+
+    /** 批量删除警告日志 */
+    int batchDelete(List<Integer> ids);
+
+    /** 清空所有已处理的日志 */
+    int clearHandled();
 }

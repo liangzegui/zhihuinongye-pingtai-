@@ -7,11 +7,11 @@
 
     <!-- 时间范围选择 -->
     <el-card class="filter-card" shadow="hover">
-      <el-row :gutter="15" align="middle">
-        <el-col :xs="24" :sm="12" :md="6">
+      <div class="filter-container">
+        <div class="filter-row">
           <div class="filter-item">
-            <span class="filter-label">时间范围：</span>
-            <el-select v-model="timeRange" @change="handleTimeRangeChange" style="width: 140px;">
+            <span class="filter-label">时间范围</span>
+            <el-select v-model="timeRange" @change="handleTimeRangeChange" placeholder="选择时间范围" class="filter-select">
               <el-option label="全部时间" value="all" />
               <el-option label="最近1小时" value="1h" />
               <el-option label="最近6小时" value="6h" />
@@ -20,48 +20,40 @@
               <el-option label="最近7天" value="7d" />
             </el-select>
           </div>
-        </el-col>
-        <el-col :xs="24" :sm="12" :md="6">
           <div class="filter-item">
-            <span class="filter-label">数据类型：</span>
-            <el-select v-model="dataType" @change="handleDataTypeChange" style="width: 140px;">
+            <span class="filter-label">数据类型</span>
+            <el-select v-model="dataType" @change="handleDataTypeChange" placeholder="选择数据类型" class="filter-select">
               <el-option label="全部数据" value="all" />
               <el-option label="温湿度" value="temp-humi" />
               <el-option label="土壤&光照" value="soil-light" />
               <el-option label="CO₂" value="co2" />
             </el-select>
           </div>
-        </el-col>
-        <el-col :xs="24" :sm="12" :md="6">
           <div class="filter-item">
-            <span class="filter-label">图表排序：</span>
-            <el-select v-model="chartSortOrder" @change="handleChartSortChange" style="width: 140px;">
+            <span class="filter-label">图表数据排序</span>
+            <el-select v-model="chartSortOrder" @change="handleChartSortChange" placeholder="选择排序方式" class="filter-select">
               <el-option label="最新在后" value="asc" />
               <el-option label="最新在前" value="desc" />
             </el-select>
           </div>
-        </el-col>
-        <el-col :xs="24" :sm="12" :md="6">
           <div class="filter-item">
-            <span class="filter-label">表格排序：</span>
-            <el-select v-model="tableSortOrder" @change="handleTableSortChange" style="width: 140px;">
+            <span class="filter-label">表格数据排序</span>
+            <el-select v-model="tableSortOrder" @change="handleTableSortChange" placeholder="选择排序方式" class="filter-select">
               <el-option label="最新在后" value="asc" />
               <el-option label="最新在前" value="desc" />
             </el-select>
           </div>
-        </el-col>
-      </el-row>
-      <el-row style="margin-top: 10px;">
-        <el-col :span="24">
+        </div>
+        <div class="filter-actions">
           <el-button type="primary" @click="refreshData" :loading="loading" icon="Refresh">
             刷新数据
           </el-button>
-        </el-col>
-      </el-row>
+        </div>
+      </div>
     </el-card>
 
     <!-- 图表展示 -->
-    <el-row :gutter="20">
+    <el-row :gutter="20" v-show="showTempHumiCharts">
       <el-col :xs="24" :sm="24" :md="24" :lg="12">
         <el-card class="chart-card" shadow="hover">
           <template #header>
@@ -93,7 +85,7 @@
       </el-col>
     </el-row>
 
-    <el-row :gutter="20" style="margin-top: 20px;">
+    <el-row :gutter="20" style="margin-top: 20px;" v-show="showSoilLightCharts">
       <el-col :xs="24" :sm="24" :md="24" :lg="12">
         <el-card class="chart-card" shadow="hover">
           <template #header>
@@ -125,7 +117,7 @@
       </el-col>
     </el-row>
 
-    <el-row :gutter="20" style="margin-top: 20px;">
+    <el-row :gutter="20" style="margin-top: 20px;" v-show="showCO2Chart">
       <el-col :span="24">
         <el-card class="chart-card" shadow="hover">
           <template #header>
@@ -171,7 +163,7 @@
             {{ row.humidity }}%
           </template>
         </el-table-column>
-          <el-table-column prop="soilAdc" label="土壤ADC" width="120" />
+        <el-table-column prop="soilAdc" label="土壤ADC" width="120" />
         <el-table-column prop="lightIntensity" label="光照(lux)" width="110" />
         <el-table-column prop="co2" label="CO₂(ppm)" width="110" />
         <el-table-column prop="collectTime" label="采集时间" min-width="180">
@@ -220,11 +212,7 @@ export default {
       dataType: 'all',
       chartSortOrder: 'asc', // 图表时间排序: asc(最新在后) 或 desc(最新在前)
       tableSortOrder: 'desc', // 表格时间排序: asc(最新在后) 或 desc(最新在前)
-      temperatureChart: null,
-      humidityChart: null,
-      soilMoistureChart: null,
-      lightIntensityChart: null,
-      co2Chart: null,
+      // 注意：图表实例不放在 data() 中，避免被 Vue 3 Proxy 代理导致 ECharts 内部崩溃
       chartData: {
         times: [],
         temperatures: [],
@@ -234,6 +222,16 @@ export default {
         co2Values: []
       }
     }
+  },
+  created() {
+    // ECharts 实例必须作为非响应式属性存储
+    // 放在 data() 中会被 Vue 3 的 Proxy 包裹，导致 ECharts 内部调度器
+    // 通过代理访问 coordinateSystem 时返回 undefined → dataSample.js 崩溃
+    this.temperatureChart = null
+    this.humidityChart = null
+    this.soilMoistureChart = null
+    this.lightIntensityChart = null
+    this.co2Chart = null
   },
   computed: {
     timeRangeText() {
@@ -246,6 +244,15 @@ export default {
         '7d': '最近7天'
       }
       return map[this.timeRange] || '最近24小时'
+    },
+    showTempHumiCharts() {
+      return this.dataType === 'all' || this.dataType === 'temp-humi'
+    },
+    showSoilLightCharts() {
+      return this.dataType === 'all' || this.dataType === 'soil-light'
+    },
+    showCO2Chart() {
+      return this.dataType === 'all' || this.dataType === 'co2'
     }
   },
   mounted() {
@@ -255,11 +262,7 @@ export default {
   },
   beforeUnmount() {
     window.removeEventListener('resize', this.handleResize)
-    if (this.temperatureChart) this.temperatureChart.dispose()
-    if (this.humidityChart) this.humidityChart.dispose()
-    if (this.soilMoistureChart) this.soilMoistureChart.dispose()
-    if (this.lightIntensityChart) this.lightIntensityChart.dispose()
-    if (this.co2Chart) this.co2Chart.dispose()
+    this.disposeAllCharts()
   },
   methods: {
     // 根据时间范围计算起止时间
@@ -318,7 +321,8 @@ export default {
           page: this.page, 
           pageSize: this.size,
           startDate: timeParams.startDate,
-          endDate: timeParams.endDate
+          endDate: timeParams.endDate,
+          sortOrder: this.tableSortOrder
         })
         
         console.log('历史数据API响应:', res)
@@ -335,21 +339,16 @@ export default {
         this.tableData = records
           .map(item => ({
             id: item.id,
-            username: item.saveUsername || item.username || item.userName || item.user_name || item.operator || fallbackUsername,
+            username: item.saveUsername ?? item.username ?? item.userName ?? item.user_name ?? item.operator ?? fallbackUsername,
             temperature: item.temperature,
             humidity: item.humidity,
-            soilAdc: item.soilAdc || item.soil_adc,
-            lightIntensity: item.lightIntensity || item.light_intensity,
+            soilAdc: item.soilAdc ?? item.soil_adc,
+            lightIntensity: item.lightIntensity ?? item.light_intensity,
             co2: item.co2,
-            collectTime: item.collectTime || item.collect_time
+            collectTime: item.collectTime ?? item.collect_time
           }))
-          .sort((a, b) => {
-            const timeA = new Date(a.collectTime).getTime()
-            const timeB = new Date(b.collectTime).getTime()
-            return this.tableSortOrder === 'asc' ? timeA - timeB : timeB - timeA
-          })
         
-        this.total = pageData.total || pageData.count || records.length || 0
+        this.total = (pageData.total != null ? pageData.total : (pageData.count != null ? pageData.count : records.length))
         console.log('表格数据条数:', this.tableData.length, '总条数:', this.total)
       } catch (err) {
         console.error('获取历史数据失败:', err)
@@ -361,11 +360,21 @@ export default {
     async fetchChartData() {
       this.loading = true
       try {
-        // 获取更多数据用于图表展示
+        // 先获取该时间范围的数据总数，再一次性取全部数据用于图表展示
         const timeParams = this.getTimeRangeParams()
+        const countRes = await getHistoricalData({ 
+          page: 1, 
+          pageSize: 1,
+          startDate: timeParams.startDate,
+          endDate: timeParams.endDate
+        })
+        const countData = countRes.data || countRes || {}
+        const totalRecords = countData.total || countData.count || 0
+        // 根据总数确定图表请求的 pageSize，至少取200条，最多取5000条防止数据量过大
+        const chartPageSize = Math.max(200, Math.min(totalRecords, 5000))
         const res = await getHistoricalData({ 
           page: 1, 
-          pageSize: 200,
+          pageSize: chartPageSize,
           startDate: timeParams.startDate,
           endDate: timeParams.endDate
         })
@@ -391,15 +400,18 @@ export default {
         sortedRecords.forEach(item => {
           const time = this.formatChartTime(item.collectTime || item.collect_time)
           this.chartData.times.push(time)
-          this.chartData.temperatures.push(item.temperature || 0)
-          this.chartData.humidities.push(item.humidity || 0)
-          this.chartData.soilAdcs.push(item.soilAdc || item.soil_adc || 0)
-          this.chartData.lightIntensities.push(item.lightIntensity || item.light_intensity || 0)
-          this.chartData.co2Values.push(item.co2 || 0)
+          this.chartData.temperatures.push(item.temperature != null ? item.temperature : 0)
+          this.chartData.humidities.push(item.humidity != null ? item.humidity : 0)
+          this.chartData.soilAdcs.push(item.soilAdc != null ? item.soilAdc : (item.soil_adc != null ? item.soil_adc : 0))
+          this.chartData.lightIntensities.push(item.lightIntensity != null ? item.lightIntensity : (item.light_intensity != null ? item.light_intensity : 0))
+          this.chartData.co2Values.push(item.co2 != null ? item.co2 : 0)
         })
 
         this.$nextTick(() => {
-          this.initCharts()
+          // 使用 requestAnimationFrame 确保浏览器完成布局计算，避免图表容器尺寸为0导致 ECharts coordinateSystem 未创建
+          requestAnimationFrame(() => {
+            this.initCharts()
+          })
         })
       } catch (err) {
         console.error('获取图表数据失败:', err)
@@ -418,35 +430,39 @@ export default {
     },
 
     initTemperatureChart() {
-      if (!this.$refs.temperatureChart) return
+      const elem = this.$refs.temperatureChart
+      if (!elem || elem.offsetWidth === 0 || elem.offsetHeight === 0) return
 
-      if (!this.temperatureChart) {
-        this.temperatureChart = echarts.init(this.$refs.temperatureChart)
+      // 销毁旧实例再创建，避免 ECharts 内部状态残留导致 dataSample/markLine 崩溃
+      if (this.temperatureChart) {
+        this.temperatureChart.dispose()
+        this.temperatureChart = null
       }
+      this.temperatureChart = echarts.init(elem)
 
       const dataLength = this.chartData.times.length
       const labelInterval = Math.max(0, Math.floor(dataLength / 8) - 1)
 
       const option = {
-          tooltip: {
-            trigger: 'axis',
-            axisPointer: { type: 'cross' },
-            formatter: '{b}<br/>{a}: {c} °C',
-            backgroundColor: 'rgba(255, 255, 255, 0.95)',
-            borderColor: '#eee',
-            borderWidth: 1,
-            textStyle: {
-              color: '#333'
-            }
-          },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'cross', crossStyle: { color: '#94a3b8' } },
+          formatter: '{b}<br/>{a}: {c} °C',
+          backgroundColor: 'rgba(255, 255, 255, 0.95)',
+          borderColor: 'rgba(71, 85, 99, 0.1)',
+          borderWidth: 1,
+          textStyle: { color: '#1e293b', fontSize: 12 },
+          boxShadow: '0 4px 12px rgba(26, 71, 42, 0.1)'
+        },
         legend: {
           data: ['温度'],
-          top: 5
+          top: 5,
+          textStyle: { color: '#475569', fontSize: 12 }
         },
         grid: {
           left: '3%',
           right: '4%',
-          bottom: '15%',
+          bottom: '18%',
           top: '15%',
           containLabel: true
         },
@@ -454,14 +470,22 @@ export default {
           {
             type: 'inside',
             start: 0,
-            end: 100
+            end: 100,
+            zoomOnMouseWheel: true,
+            moveOnMouseMove: true
           },
           {
             type: 'slider',
+            show: true,
+            realtime: true,
             start: 0,
             end: 100,
-            height: 20,
-            bottom: 5
+            height: 25,
+            bottom: 8,
+            handleSize: '110%',
+            borderColor: 'rgba(71, 85, 99, 0.2)',
+            fillerColor: 'rgba(239, 68, 68, 0.15)',
+            handleStyle: { color: '#ef4444' }
           }
         ],
         xAxis: {
@@ -472,18 +496,17 @@ export default {
             interval: labelInterval,
             rotate: 30,
             fontSize: 11,
-            color: '#666'
+            color: '#64748b'
           },
-          axisLine: {
-            lineStyle: { color: '#ddd' }
-          }
+          axisLine: { lineStyle: { color: 'rgba(71, 85, 99, 0.2)' } },
+          splitLine: { show: false }
         },
         yAxis: {
           type: 'value',
           name: '温度(°C)',
-          axisLabel: {
-            formatter: '{value} °C'
-          }
+          nameTextStyle: { color: '#64748b', fontSize: 11 },
+          axisLabel: { formatter: '{value}°C', color: '#64748b', fontSize: 11 },
+          splitLine: { lineStyle: { color: 'rgba(71, 85, 99, 0.08)', type: 'dashed' } }
         },
         series: [
           {
@@ -491,15 +514,13 @@ export default {
             type: 'line',
             smooth: true,
             symbol: 'none',
-            lineWidth: 2,
+            lineWidth: 2.5,
             data: this.chartData.temperatures,
-            itemStyle: {
-              color: '#f56c6c'
-            },
+            itemStyle: { color: '#ef4444' },
             areaStyle: {
               color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                { offset: 0, color: 'rgba(245, 108, 108, 0.25)' },
-                { offset: 1, color: 'rgba(245, 108, 108, 0.02)' }
+                { offset: 0, color: 'rgba(239, 68, 68, 0.2)' },
+                { offset: 1, color: 'rgba(239, 68, 68, 0.02)' }
               ])
             }
           }
@@ -510,35 +531,37 @@ export default {
     },
 
     initHumidityChart() {
-      if (!this.$refs.humidityChart) return
+      const elem = this.$refs.humidityChart
+      if (!elem || elem.offsetWidth === 0 || elem.offsetHeight === 0) return
 
-      if (!this.humidityChart) {
-        this.humidityChart = echarts.init(this.$refs.humidityChart)
+      if (this.humidityChart) {
+        this.humidityChart.dispose()
+        this.humidityChart = null
       }
+      this.humidityChart = echarts.init(elem)
 
       const dataLength = this.chartData.times.length
       const labelInterval = Math.max(0, Math.floor(dataLength / 8) - 1)
 
       const option = {
-          tooltip: {
-            trigger: 'axis',
-            axisPointer: { type: 'cross' },
-            formatter: '{b}<br/>{a}: {c} %',
-            backgroundColor: 'rgba(255, 255, 255, 0.95)',
-            borderColor: '#eee',
-            borderWidth: 1,
-            textStyle: {
-              color: '#333'
-            }
-          },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'cross', crossStyle: { color: '#94a3b8' } },
+          formatter: '{b}<br/>{a}: {c} %',
+          backgroundColor: 'rgba(255, 255, 255, 0.95)',
+          borderColor: 'rgba(71, 85, 99, 0.1)',
+          borderWidth: 1,
+          textStyle: { color: '#1e293b', fontSize: 12 }
+        },
         legend: {
           data: ['湿度'],
-          top: 5
+          top: 5,
+          textStyle: { color: '#475569', fontSize: 12 }
         },
         grid: {
           left: '3%',
           right: '4%',
-          bottom: '15%',
+          bottom: '18%',
           top: '15%',
           containLabel: true
         },
@@ -546,14 +569,22 @@ export default {
           {
             type: 'inside',
             start: 0,
-            end: 100
+            end: 100,
+            zoomOnMouseWheel: true,
+            moveOnMouseMove: true
           },
           {
             type: 'slider',
+            show: true,
+            realtime: true,
             start: 0,
             end: 100,
-            height: 20,
-            bottom: 5
+            height: 25,
+            bottom: 8,
+            handleSize: '110%',
+            borderColor: 'rgba(71, 85, 99, 0.2)',
+            fillerColor: 'rgba(20, 184, 166, 0.15)',
+            handleStyle: { color: '#14b8a6' }
           }
         ],
         xAxis: {
@@ -564,18 +595,17 @@ export default {
             interval: labelInterval,
             rotate: 30,
             fontSize: 11,
-            color: '#666'
+            color: '#64748b'
           },
-          axisLine: {
-            lineStyle: { color: '#ddd' }
-          }
+          axisLine: { lineStyle: { color: 'rgba(71, 85, 99, 0.2)' } },
+          splitLine: { show: false }
         },
         yAxis: {
           type: 'value',
           name: '湿度(%)',
-          axisLabel: {
-            formatter: '{value} %'
-          }
+          nameTextStyle: { color: '#64748b', fontSize: 11 },
+          axisLabel: { formatter: '{value}%', color: '#64748b', fontSize: 11 },
+          splitLine: { lineStyle: { color: 'rgba(71, 85, 99, 0.08)', type: 'dashed' } }
         },
         series: [
           {
@@ -583,15 +613,13 @@ export default {
             type: 'line',
             smooth: true,
             symbol: 'none',
-            lineWidth: 2,
+            lineWidth: 2.5,
             data: this.chartData.humidities,
-            itemStyle: {
-              color: '#409eff'
-            },
+            itemStyle: { color: '#14b8a6' },
             areaStyle: {
               color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                { offset: 0, color: 'rgba(64, 158, 255, 0.25)' },
-                { offset: 1, color: 'rgba(64, 158, 255, 0.02)' }
+                { offset: 0, color: 'rgba(20, 184, 166, 0.2)' },
+                { offset: 1, color: 'rgba(20, 184, 166, 0.02)' }
               ])
             }
           }
@@ -602,35 +630,37 @@ export default {
     },
 
     initSoilMoistureChart() {
-      if (!this.$refs.soilMoistureChart) return
+      const elem = this.$refs.soilMoistureChart
+      if (!elem || elem.offsetWidth === 0 || elem.offsetHeight === 0) return
 
-      if (!this.soilMoistureChart) {
-        this.soilMoistureChart = echarts.init(this.$refs.soilMoistureChart)
+      if (this.soilMoistureChart) {
+        this.soilMoistureChart.dispose()
+        this.soilMoistureChart = null
       }
+      this.soilMoistureChart = echarts.init(elem)
 
       const dataLength = this.chartData.times.length
       const labelInterval = Math.max(0, Math.floor(dataLength / 8) - 1)
 
       const option = {
-          tooltip: {
-            trigger: 'axis',
-            axisPointer: { type: 'cross' },
-            formatter: '{b}<br/>{a}: {c} ADC',
-            backgroundColor: 'rgba(255, 255, 255, 0.95)',
-            borderColor: '#eee',
-            borderWidth: 1,
-            textStyle: {
-              color: '#333'
-            }
-          },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'cross', crossStyle: { color: '#94a3b8' } },
+          formatter: '{b}<br/>{a}: {c} ADC',
+          backgroundColor: 'rgba(255, 255, 255, 0.95)',
+          borderColor: 'rgba(71, 85, 99, 0.1)',
+          borderWidth: 1,
+          textStyle: { color: '#1e293b', fontSize: 12 }
+        },
         legend: {
           data: ['土壤ADC'],
-          top: 5
+          top: 5,
+          textStyle: { color: '#475569', fontSize: 12 }
         },
         grid: {
           left: '3%',
           right: '4%',
-          bottom: '15%',
+          bottom: '18%',
           top: '15%',
           containLabel: true
         },
@@ -638,14 +668,22 @@ export default {
           {
             type: 'inside',
             start: 0,
-            end: 100
+            end: 100,
+            zoomOnMouseWheel: true,
+            moveOnMouseMove: true
           },
           {
             type: 'slider',
+            show: true,
+            realtime: true,
             start: 0,
             end: 100,
-            height: 20,
-            bottom: 5
+            height: 25,
+            bottom: 8,
+            handleSize: '110%',
+            borderColor: 'rgba(71, 85, 99, 0.2)',
+            fillerColor: 'rgba(58, 125, 68, 0.15)',
+            handleStyle: { color: '#3a7d44' }
           }
         ],
         xAxis: {
@@ -656,21 +694,17 @@ export default {
             interval: labelInterval,
             rotate: 30,
             fontSize: 11,
-            color: '#666'
+            color: '#64748b'
           },
-          axisLine: {
-            lineStyle: { color: '#ddd' }
-          }
+          axisLine: { lineStyle: { color: 'rgba(71, 85, 99, 0.2)' } },
+          splitLine: { show: false }
         },
         yAxis: {
           type: 'value',
           name: '土壤ADC',
-          axisLabel: {
-            formatter: '{value}'
-          },
-          splitLine: {
-            lineStyle: { color: '#eee', type: 'dashed' }
-          }
+          nameTextStyle: { color: '#64748b', fontSize: 11 },
+          axisLabel: { formatter: '{value}', color: '#64748b', fontSize: 11 },
+          splitLine: { lineStyle: { color: 'rgba(71, 85, 99, 0.08)', type: 'dashed' } }
         },
         series: [
           {
@@ -678,15 +712,13 @@ export default {
             type: 'line',
             smooth: true,
             symbol: 'none',
-            lineWidth: 2,
+            lineWidth: 2.5,
             data: this.chartData.soilAdcs,
-            itemStyle: {
-              color: '#67c23a'
-            },
+            itemStyle: { color: '#3a7d44' },
             areaStyle: {
               color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                { offset: 0, color: 'rgba(103, 194, 58, 0.25)' },
-                { offset: 1, color: 'rgba(103, 194, 58, 0.02)' }
+                { offset: 0, color: 'rgba(58, 125, 68, 0.2)' },
+                { offset: 1, color: 'rgba(58, 125, 68, 0.02)' }
               ])
             }
           }
@@ -697,35 +729,37 @@ export default {
     },
 
     initLightIntensityChart() {
-      if (!this.$refs.lightIntensityChart) return
+      const elem = this.$refs.lightIntensityChart
+      if (!elem || elem.offsetWidth === 0 || elem.offsetHeight === 0) return
 
-      if (!this.lightIntensityChart) {
-        this.lightIntensityChart = echarts.init(this.$refs.lightIntensityChart)
+      if (this.lightIntensityChart) {
+        this.lightIntensityChart.dispose()
+        this.lightIntensityChart = null
       }
+      this.lightIntensityChart = echarts.init(elem)
 
       const dataLength = this.chartData.times.length
       const labelInterval = Math.max(0, Math.floor(dataLength / 8) - 1)
 
       const option = {
-          tooltip: {
-            trigger: 'axis',
-            axisPointer: { type: 'cross' },
-            formatter: '{b}<br/>{a}: {c} lux',
-            backgroundColor: 'rgba(255, 255, 255, 0.95)',
-            borderColor: '#eee',
-            borderWidth: 1,
-            textStyle: {
-              color: '#333'
-            }
-          },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'cross', crossStyle: { color: '#94a3b8' } },
+          formatter: '{b}<br/>{a}: {c} lux',
+          backgroundColor: 'rgba(255, 255, 255, 0.95)',
+          borderColor: 'rgba(71, 85, 99, 0.1)',
+          borderWidth: 1,
+          textStyle: { color: '#1e293b', fontSize: 12 }
+        },
         legend: {
           data: ['光照强度'],
-          top: 5
+          top: 5,
+          textStyle: { color: '#475569', fontSize: 12 }
         },
         grid: {
           left: '3%',
           right: '4%',
-          bottom: '15%',
+          bottom: '18%',
           top: '15%',
           containLabel: true
         },
@@ -733,14 +767,22 @@ export default {
           {
             type: 'inside',
             start: 0,
-            end: 100
+            end: 100,
+            zoomOnMouseWheel: true,
+            moveOnMouseMove: true
           },
           {
             type: 'slider',
+            show: true,
+            realtime: true,
             start: 0,
             end: 100,
-            height: 20,
-            bottom: 5
+            height: 25,
+            bottom: 8,
+            handleSize: '110%',
+            borderColor: 'rgba(71, 85, 99, 0.2)',
+            fillerColor: 'rgba(217, 119, 6, 0.15)',
+            handleStyle: { color: '#d97706' }
           }
         ],
         xAxis: {
@@ -751,21 +793,17 @@ export default {
             interval: labelInterval,
             rotate: 30,
             fontSize: 11,
-            color: '#666'
+            color: '#64748b'
           },
-          axisLine: {
-            lineStyle: { color: '#ddd' }
-          }
+          axisLine: { lineStyle: { color: 'rgba(71, 85, 99, 0.2)' } },
+          splitLine: { show: false }
         },
         yAxis: {
           type: 'value',
           name: '光照(lux)',
-          axisLabel: {
-            formatter: '{value}'
-          },
-          splitLine: {
-            lineStyle: { color: '#eee', type: 'dashed' }
-          }
+          nameTextStyle: { color: '#64748b', fontSize: 11 },
+          axisLabel: { formatter: '{value}', color: '#64748b', fontSize: 11 },
+          splitLine: { lineStyle: { color: 'rgba(71, 85, 99, 0.08)', type: 'dashed' } }
         },
         series: [
           {
@@ -773,15 +811,13 @@ export default {
             type: 'line',
             smooth: true,
             symbol: 'none',
-            lineWidth: 2,
+            lineWidth: 2.5,
             data: this.chartData.lightIntensities,
-            itemStyle: {
-              color: '#e6a23c'
-            },
+            itemStyle: { color: '#d97706' },
             areaStyle: {
               color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                { offset: 0, color: 'rgba(230, 162, 60, 0.25)' },
-                { offset: 1, color: 'rgba(230, 162, 60, 0.02)' }
+                { offset: 0, color: 'rgba(217, 119, 6, 0.2)' },
+                { offset: 1, color: 'rgba(217, 119, 6, 0.02)' }
               ])
             }
           }
@@ -792,36 +828,38 @@ export default {
     },
 
     initCO2Chart() {
-      if (!this.$refs.co2Chart) return
-      
-      if (!this.co2Chart) {
-        this.co2Chart = echarts.init(this.$refs.co2Chart)
+      const elem = this.$refs.co2Chart
+      if (!elem || elem.offsetWidth === 0 || elem.offsetHeight === 0) return
+
+      if (this.co2Chart) {
+        this.co2Chart.dispose()
+        this.co2Chart = null
       }
+      this.co2Chart = echarts.init(elem)
 
       // 计算X轴标签间隔
       const dataLength = this.chartData.times.length
       const labelInterval = Math.max(0, Math.floor(dataLength / 10) - 1)
-      
+
       const option = {
-          tooltip: {
-            trigger: 'axis',
-            axisPointer: { type: 'cross' },
-            formatter: '{b}<br/>{a}: {c} ppm',
-            backgroundColor: 'rgba(255, 255, 255, 0.95)',
-            borderColor: '#eee',
-            borderWidth: 1,
-            textStyle: {
-              color: '#333'
-            }
-          },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'cross', crossStyle: { color: '#94a3b8' } },
+          formatter: '{b}<br/>{a}: {c} ppm',
+          backgroundColor: 'rgba(255, 255, 255, 0.95)',
+          borderColor: 'rgba(71, 85, 99, 0.1)',
+          borderWidth: 1,
+          textStyle: { color: '#1e293b', fontSize: 12 }
+        },
         legend: {
           data: ['CO₂浓度'],
-          top: 5
+          top: 5,
+          textStyle: { color: '#475569', fontSize: 12 }
         },
         grid: {
           left: '3%',
           right: '3%',
-          bottom: '15%',
+          bottom: '18%',
           top: '15%',
           containLabel: true
         },
@@ -829,14 +867,22 @@ export default {
           {
             type: 'inside',
             start: 0,
-            end: 100
+            end: 100,
+            zoomOnMouseWheel: true,
+            moveOnMouseMove: true
           },
           {
             type: 'slider',
+            show: true,
+            realtime: true,
             start: 0,
             end: 100,
-            height: 20,
-            bottom: 5
+            height: 25,
+            bottom: 8,
+            handleSize: '110%',
+            borderColor: 'rgba(71, 85, 99, 0.2)',
+            fillerColor: 'rgba(15, 118, 110, 0.15)',
+            handleStyle: { color: '#0f766e' }
           }
         ],
         xAxis: {
@@ -847,22 +893,17 @@ export default {
             interval: labelInterval,
             rotate: 20,
             fontSize: 11,
-            color: '#666'
+            color: '#64748b'
           },
-          axisLine: {
-            lineStyle: { color: '#ddd' }
-          }
+          axisLine: { lineStyle: { color: 'rgba(71, 85, 99, 0.2)' } },
+          splitLine: { show: false }
         },
         yAxis: {
           type: 'value',
           name: 'CO₂(ppm)',
-          axisLabel: {
-            formatter: '{value}',
-            fontSize: 11
-          },
-          splitLine: {
-            lineStyle: { color: '#eee', type: 'dashed' }
-          }
+          nameTextStyle: { color: '#64748b', fontSize: 11 },
+          axisLabel: { formatter: '{value}', color: '#64748b', fontSize: 11 },
+          splitLine: { lineStyle: { color: 'rgba(71, 85, 99, 0.08)', type: 'dashed' } }
         },
         series: [
           {
@@ -870,27 +911,28 @@ export default {
             type: 'line',
             smooth: true,
             symbol: 'none',
-            lineWidth: 2,
+            lineWidth: 2.5,
             data: this.chartData.co2Values,
-            itemStyle: {
-              color: '#909399'
-            },
+            itemStyle: { color: '#0f766e' },
             areaStyle: {
               color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                { offset: 0, color: 'rgba(144, 147, 153, 0.25)' },
-                { offset: 1, color: 'rgba(144, 147, 153, 0.02)' }
+                { offset: 0, color: 'rgba(15, 118, 110, 0.2)' },
+                { offset: 1, color: 'rgba(15, 118, 110, 0.02)' }
               ])
             },
             markLine: {
               silent: true,
               lineStyle: {
-                color: '#f56c6c',
+                color: '#ef4444',
                 type: 'dashed',
                 width: 2
               },
               label: {
                 fontSize: 11,
-                color: '#f56c6c'
+                color: '#ef4444',
+                backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                padding: [4, 8],
+                borderRadius: 4
               },
               data: [
                 { yAxis: 1000, label: { formatter: '警戒线 1000ppm' } }
@@ -904,11 +946,20 @@ export default {
     },
 
     handleResize() {
-      this.temperatureChart?.resize()
-      this.humidityChart?.resize()
-      this.soilMoistureChart?.resize()
-      this.lightIntensityChart?.resize()
-      this.co2Chart?.resize()
+      // 只对容器可见（非零尺寸）的图表执行 resize，
+      // 避免 ECharts 在 0 尺寸容器上将 coordinateSystem 置为 undefined 导致 dataSample.js 崩溃
+      const pairs = [
+        [this.$refs.temperatureChart, this.temperatureChart],
+        [this.$refs.humidityChart, this.humidityChart],
+        [this.$refs.soilMoistureChart, this.soilMoistureChart],
+        [this.$refs.lightIntensityChart, this.lightIntensityChart],
+        [this.$refs.co2Chart, this.co2Chart]
+      ]
+      for (const [el, chart] of pairs) {
+        if (chart && el && el.offsetWidth > 0 && el.offsetHeight > 0) {
+          chart.resize()
+        }
+      }
     },
 
     handleSizeChange(size) {
@@ -922,39 +973,27 @@ export default {
     },
 
     handleDataTypeChange() {
-      // 根据数据类型显示/隐藏对应图表
+      // 关键：先同步销毁所有图表实例。
+      // 不能只销毁"隐藏的"，因为此时 Vue 尚未更新 DOM，v-show 变化还在队列中，
+      // 检查 offsetWidth 得到的仍然是旧值 → 即将被隐藏的图表不会被 dispose →
+      // DOM 更新后容器变 0 尺寸，但旧实例调度器仍存活 → dataSample 崩溃。
+      this.disposeAllCharts()
       this.$nextTick(() => {
-        this.updateChartsVisibility()
+        requestAnimationFrame(() => {
+          this.initCharts()
+        })
       })
     },
 
-    updateChartsVisibility() {
-      // 获取所有图表卡片
-      const chartCards = document.querySelectorAll('.chart-card')
-      if (!chartCards.length) return
-
-      // 根据数据类型控制显示
-      chartCards.forEach((card) => {
-        const cardTitle = card.querySelector('.header-title')?.textContent || ''
-        
-        let shouldShow = true
-        switch (this.dataType) {
-          case 'temp-humi':
-            shouldShow = cardTitle.includes('温度') || cardTitle.includes('湿度')
-            break
-          case 'soil-light':
-            shouldShow = cardTitle.includes('土壤') || cardTitle.includes('光照')
-            break
-          case 'co2':
-            shouldShow = cardTitle.includes('CO')
-            break
-          case 'all':
-          default:
-            shouldShow = true
+    // 无条件销毁所有图表实例
+    disposeAllCharts() {
+      const props = ['temperatureChart', 'humidityChart', 'soilMoistureChart', 'lightIntensityChart', 'co2Chart']
+      for (const prop of props) {
+        if (this[prop]) {
+          this[prop].dispose()
+          this[prop] = null
         }
-        
-        card.style.display = shouldShow ? '' : 'none'
-      })
+      }
     },
 
     handlePageChange(page) {
@@ -1002,12 +1041,12 @@ export default {
         // 添加数据行
         this.tableData.forEach(item => {
           worksheet.addRow({
-            username: item.username || '-',
-            temperature: item.temperature || '',
-            humidity: item.humidity || '',
-            soilAdc: item.soilAdc || '',
-            lightIntensity: item.lightIntensity || '',
-            co2: item.co2 || '',
+            username: item.username ?? '-',
+            temperature: item.temperature ?? '',
+            humidity: item.humidity ?? '',
+            soilAdc: item.soilAdc ?? '',
+            lightIntensity: item.lightIntensity ?? '',
+            co2: item.co2 ?? '',
             collectTime: this.formatExportTime(item.collectTime)
           })
         })
@@ -1081,54 +1120,222 @@ export default {
 
 
 <style scoped>
+/* ========== Design Tokens: 智慧农业主题 ========== */
+/* Primary: #1a472a (深森林绿)  Accent: #3a7d44 (森林绿)
+   Secondary: #0f766e (青色)    Surface: #f0fdf4 (薄荷绿)
+   Text: #1e293b / #475569 / #94a3b8
+   Border: rgba(71, 85, 99, 0.1) */
+
 .historical-page {
   padding: 20px;
-  background: #f5f7fa;
-  min-height: calc(100vh - 60px);
+  background-color: #f8f9fa;
 }
 
 .page-header {
   display: flex;
   flex-direction: column;
   margin-bottom: 20px;
-  padding: 20px;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  padding: 24px 28px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+  border-radius: 16px;
+  border: 1px solid rgba(71, 85, 99, 0.1);
+  box-shadow: 0 4px 20px rgba(26, 71, 42, 0.06);
+  position: relative;
+  z-index: 10;
+}
+
+.page-header::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #1a472a, #3a7d44, #22c55e);
+  border-radius: 16px 16px 0 0;
 }
 
 .page-header h2 {
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   font-size: 24px;
-  color: #303133;
+  font-weight: 700;
+  color: #2c3e50;
+  letter-spacing: -0.02em;
 }
 
 .page-header p {
   margin: 0;
   font-size: 14px;
-  color: #606266;
+  color: #6c757d;
 }
 
+/* ========== Filter Card ========== */
 .filter-card {
   margin-bottom: 20px;
-  border-radius: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(71, 85, 99, 0.1);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+}
+
+.filter-card :deep(.el-card__body) {
+  padding: 20px;
+}
+
+/* 筛选容器 - 现代化布局 */
+.filter-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.filter-row {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 .filter-item {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: 1;
+  min-width: 200px;
 }
 
 .filter-label {
   font-size: 14px;
-  color: #606266;
+  font-weight: 500;
+  color: #1a472a;
   white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 80px;
 }
 
+.filter-select {
+  width: 150px;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* 统一筛选框样式 */
+.filter-select :deep(.el-input__wrapper) {
+  border-radius: 8px;
+  border: 1px solid rgba(58, 125, 68, 0.2);
+  background: #fff;
+  transition: all 0.2s ease;
+}
+
+.filter-select :deep(.el-input__wrapper:hover) {
+  border-color: rgba(58, 125, 68, 0.4);
+  box-shadow: 0 2px 8px rgba(58, 125, 68, 0.1);
+}
+
+.filter-select :deep(.el-input.is-focus .el-input__wrapper) {
+  border-color: #3a7d44;
+  box-shadow: 0 0 0 2px rgba(58, 125, 68, 0.1);
+}
+
+.filter-select :deep(.el-input__inner) {
+  color: #1a472a;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.filter-select :deep(.el-select__placeholder) {
+  color: rgba(26, 71, 42, 0.5);
+  font-size: 13px;
+  text-align: center;
+  width: 100%;
+}
+
+.filter-select :deep(.el-select__selected-item) {
+  text-align: center;
+  width: 100%;
+}
+
+.filter-select :deep(.el-input__suffix) {
+  position: absolute;
+  right: 8px;
+}
+
+.filter-select :deep(.el-select__caret) {
+  color: rgba(58, 125, 68, 0.7);
+}
+
+/* 响应式布局 */
+@media (max-width: 1200px) {
+  .filter-row {
+    gap: 15px;
+  }
+
+  .filter-item {
+    min-width: 180px;
+  }
+
+  .filter-select {
+    width: 140px;
+  }
+}
+
+@media (max-width: 768px) {
+  .filter-row {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .filter-item {
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+    min-width: unset;
+    gap: 8px;
+  }
+
+  .filter-label {
+    min-width: unset;
+  }
+
+  .filter-select {
+    width: 100%;
+  }
+
+  .filter-actions {
+    width: 100%;
+  }
+
+  .filter-actions .el-button {
+    flex: 1;
+  }
+}
+
+/* ========== Chart Cards ========== */
 .chart-card {
   margin-bottom: 20px;
-  border-radius: 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(71, 85, 99, 0.1);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+
+.chart-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px rgba(26, 71, 42, 0.1);
+}
+
+.chart-card :deep(.el-card__header) {
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(71, 85, 99, 0.08);
+  background: linear-gradient(180deg, rgba(240, 253, 244, 0.5) 0%, transparent 100%);
 }
 
 .card-header {
@@ -1140,57 +1347,44 @@ export default {
 .header-title {
   font-size: 16px;
   font-weight: 600;
-  color: #303133;
+  color: #343a40;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  letter-spacing: -0.01em;
 }
 
 .header-icon {
-  width: 24px;
-  height: 24px;
-  vertical-align: middle;
+  width: 20px;
+  height: 20px;
+  margin-right: 8px;
 }
 
 .chart-container {
   width: 100%;
-  height: 350px;
+  height: 300px;
 }
 
+/* ========== Table Card ========== */
 .table-card {
-  border-radius: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(71, 85, 99, 0.1);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+}
+
+.table-card :deep(.el-card__header) {
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(71, 85, 99, 0.08);
+  background: linear-gradient(180deg, rgba(240, 253, 244, 0.5) 0%, transparent 100%);
 }
 
 .pagination-container {
   display: flex;
-  justify-content: center;
-  padding: 20px 0;
+  justify-content: flex-end;
+  margin-top: 20px;
 }
 
-/* 响应式设计 */
-@media (max-width: 768px) {
-  .page-header {
-    padding: 15px;
-  }
 
-  .chart-container {
-    height: 300px;
-  }
-
-  .filter-item {
-    margin-bottom: 10px;
-  }
-}
-
-:deep(.el-card__body) {
-  padding: 20px;
-}
-
-:deep(.el-table) {
-  font-size: 13px;
-}
-
-:deep(.el-pagination) {
-  justify-content: center;
-}
 </style>
+

@@ -32,9 +32,12 @@ export const useNotificationStore = defineStore('notification', {
         receivedTime: new Date().toLocaleString('zh-CN', { hour12: false })
       })
       this.unreadCount++
-      // 只保留最近 50 条
+      // 只保留最近 50 条，同步修正未读计数
       if (this.warnings.length > 50) {
+        const removed = this.warnings.slice(50)
+        const removedUnread = removed.filter(w => !w.read).length
         this.warnings = this.warnings.slice(0, 50)
+        this.unreadCount = Math.max(0, this.unreadCount - removedUnread)
       }
     },
 

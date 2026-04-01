@@ -157,8 +157,6 @@ export default {
         const realTimeRes = await getRealTimeData()
         let envData = null
         
-        console.log('API返回结果:', realTimeRes)
-        
         // axios拦截器已经返回 response.data，所以 realTimeRes = {code: 200, data: [...]}
         if (realTimeRes && realTimeRes.data) {
           const dataList = realTimeRes.data
@@ -168,8 +166,6 @@ export default {
             envData = dataList
           }
         }
-        
-        console.log('获取到的实时数据:', envData)
         
         if (!envData || (envData.temperature === undefined && envData.humidity === undefined)) {
           ElMessage.warning('无法获取实时数据，请确保设备已连接')
@@ -192,11 +188,7 @@ export default {
           lightIntensity: envData.lightIntensity || 0,
           co2: envData.co2 || envData.eco2 || 0
         }
-        console.log('准备保存的数据:', saveData)
-        
         const res = await saveEnvData(saveData)
-        
-        console.log('保存响应:', res)
         
         // axios拦截器已返回 response.data，所以 res = {code: 200, data: {success: true}}
         if (res && res.data?.success) {

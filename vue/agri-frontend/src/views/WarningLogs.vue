@@ -7,11 +7,11 @@
 
     <!-- 筛选和操作区 -->
     <el-card class="filter-card" shadow="hover">
-      <el-row :gutter="15" align="middle">
-        <el-col :xs="24" :sm="12" :md="6">
+      <div class="filter-container">
+        <div class="filter-row">
           <div class="filter-item">
-            <span class="filter-label">警告类型：</span>
-            <el-select v-model="filterType" @change="handleFilter" placeholder="全部类型" style="width: 100%;">
+            <span class="filter-label">警告类型</span>
+            <el-select v-model="filterType" @change="handleFilter" placeholder="选择警告类型" class="filter-select">
               <el-option label="全部" value="" />
               <el-option label="温度异常" value="temperature" />
               <el-option label="湿度异常" value="humidity" />
@@ -20,34 +20,42 @@
               <el-option label="CO₂异常" value="co2" />
             </el-select>
           </div>
-        </el-col>
-        <el-col :xs="24" :sm="12" :md="6">
           <div class="filter-item">
-            <span class="filter-label">状态：</span>
-            <el-select v-model="filterStatus" @change="handleFilter" placeholder="全部状态" style="width: 100%;">
+            <span class="filter-label">状态</span>
+            <el-select v-model="filterStatus" @change="handleFilter" placeholder="选择状态" class="filter-select">
               <el-option label="全部" value="" />
               <el-option label="未处理" value="0" />
               <el-option label="已处理" value="1" />
             </el-select>
           </div>
-        </el-col>
-        <el-col :xs="24" :sm="12" :md="6">
           <div class="filter-item">
-            <span class="filter-label">时间范围：</span>
-            <el-select v-model="filterTime" @change="handleFilter" placeholder="全部时间" style="width: 100%;">
+            <span class="filter-label">时间范围</span>
+            <el-select v-model="filterTime" @change="handleFilter" placeholder="选择时间范围" class="filter-select">
               <el-option label="全部" value="" />
               <el-option label="今天" value="today" />
               <el-option label="本周" value="week" />
               <el-option label="本月" value="month" />
             </el-select>
           </div>
-        </el-col>
-        <el-col :xs="24" :sm="12" :md="6">
-          <el-button type="primary" @click="fetchWarningLogs" :loading="loading" style="width: 100%;">
+        </div>
+        <div class="filter-actions">
+          <el-button type="primary" @click="fetchWarningLogs" :loading="loading">
             <el-icon><Refresh /></el-icon> 刷新
           </el-button>
-        </el-col>
-      </el-row>
+          <el-button type="text" @click="exportLogs" size="small">导出日志</el-button>
+        </div>
+      </div>
+    </el-card>
+
+    <!-- 批量操作栏 -->
+    <el-card v-if="selectedIds.length > 0" class="batch-bar" shadow="hover" style="margin-top: 12px;">
+      <div class="batch-actions">
+        <span class="batch-info">已选中 <strong>{{ selectedIds.length }}</strong> 条记录</span>
+        <el-button type="warning" size="small" @click="batchHandle" :loading="batchLoading">
+          <el-icon><Check /></el-icon> 批量标记已处理
+        </el-button>
+        <el-button size="small" @click="clearSelection">取消选择</el-button>
+      </div>
     </el-card>
 
     <!-- 警告日志表格 -->
@@ -55,17 +63,19 @@
       <template #header>
         <div class="card-header">
           <span class="header-title">日志列表（共 {{ totalLogs }} 条）</span>
-          <el-button type="text" @click="exportLogs" size="small">导出日志</el-button>
         </div>
       </template>
 
       <el-table
+        ref="logTable"
         :data="logList"
         stripe
         style="width: 100%"
         v-loading="loading"
         :max-height="600"
+        @selection-change="handleSelectionChange"
       >
+        <el-table-column type="selection" width="50" />
         <el-table-column prop="id" label="ID" width="80" />
         
         <el-table-column label="警告类型" width="120">
@@ -105,7 +115,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button 
               v-if="row.status === 0"
@@ -192,14 +202,17 @@
 </template>
 
 <script>
-import { getWarningLogs, markWarningHandled } from '@/api/warning'
+import { getWarningLogs, markWarningHandled, batchMarkHandled } from '@/api/warning'
+import { Check, Refresh } from '@element-plus/icons-vue'
 
 export default {
   name: 'WarningLogs',
+  components: { Check, Refresh },
   data() {
     return {
       logList: [],
       loading: false,
+      batchLoading: false,
       currentPage: 1,
       pageSize: 20,
       totalLogs: 0,
@@ -208,6 +221,7 @@ export default {
       filterTime: '',
       detailsVisible: false,
       selectedLog: null,
+      selectedIds: [],
       refreshTimer: null
     }
   },
@@ -269,7 +283,54 @@ export default {
       this.currentPage = page
       this.fetchWarningLogs()
     },
+
+    // ==================== 多选操作 ====================
+
+    // 多选变化
+    handleSelectionChange(selection) {
+      this.selectedIds = selection.map(row => row.id)
+    },
+
+    // 清除选择
+    clearSelection() {
+      this.$refs.logTable.clearSelection()
+      this.selectedIds = []
+    },
+
+    // 批量标记已处理
+    async batchHandle() {
+      const unhandledIds = this.selectedIds.filter(id => {
+        const row = this.logList.find(r => r.id === id)
+        return row && row.status === 0
+      })
+      if (unhandledIds.length === 0) {
+        this.$message.warning('所选记录均已处理')
+        return
+      }
+      try {
+        await this.$confirm(`确认批量标记 ${unhandledIds.length} 条记录为已处理？`, '批量处理', {
+          confirmButtonText: '确定',
+          cancelButtonText: '取消',
+          type: 'warning'
+        })
+        this.batchLoading = true
+        const res = await batchMarkHandled(unhandledIds)
+        if (res && res.code === 200) {
+          this.$message.success(`成功处理 ${res.data?.handledCount || unhandledIds.length} 条记录`)
+          this.clearSelection()
+          this.fetchWarningLogs()
+        } else {
+          this.$message.error(res?.msg || '批量处理失败')
+        }
+      } catch (err) {
+        if (err !== 'cancel') this.$message.error('操作失败')
+      } finally {
+        this.batchLoading = false
+      }
+    },
     
+    // ==================== 单条操作 ====================
+
     // 标记为已处理
     async markAsResolved(logId) {
       this.$confirm('确认标记此警告为已处理？', '提示', {
@@ -383,85 +444,353 @@ export default {
 </script>
 
 <style scoped>
+/* ========== 智慧农业主题设计 ========== */
+/* Primary: #1a472a (深森林绿) Accent: #3a7d44 (森林绿)
+   Secondary: #0f766e (青色) Surface: #f0fdf4 (薄荷绿) */
+
 .warning-page {
-  padding: 20px;
+  padding: 24px;
+  min-height: calc(100vh - 60px);
+  background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 50%, #f0fdfa 100%);
+  position: relative;
 }
+
+.warning-page::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 50%;
+  height: 50%;
+  background: radial-gradient(ellipse at top left, rgba(58, 125, 68, 0.06) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+/* ========== Page Header ========== */
 .page-header {
-  margin-bottom: 25px;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 20px;
+  padding: 24px 28px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+  border-radius: 16px;
+  border: 1px solid rgba(71, 85, 99, 0.1);
+  box-shadow: 0 4px 20px rgba(26, 71, 42, 0.06);
+  position: relative;
+  z-index: 10;
 }
+
+.page-header::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #ea580c, #f97316, #fb923c);
+  border-radius: 16px 16px 0 0;
+}
+
 .page-header h2 {
-  color: #1b5e20;
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   font-size: 22px;
+  font-weight: 700;
+  color: #1a472a;
+  letter-spacing: -0.02em;
 }
+
 .page-header p {
-  color: #558b2f;
   margin: 0;
   font-size: 14px;
+  color: #64748b;
 }
-.log-container {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-  gap: 15px;
+
+/* ========== Filter Card ========== */
+.filter-card {
+  border-radius: 14px;
+  border: 1px solid rgba(71, 85, 99, 0.1);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
 }
+
+.filter-card :deep(.el-card__body) {
+  padding: 20px;
+}
+
+/* 筛选容器 - 现代化布局 */
+.filter-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.filter-row {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.filter-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.filter-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1a472a;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 80px;
+}
+
+.filter-select {
+  width: 150px;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* 统一筛选框样式 */
+.filter-select :deep(.el-input__wrapper) {
+  border-radius: 8px;
+  border: 1px solid rgba(58, 125, 68, 0.2);
+  background: #fff;
+  transition: all 0.2s ease;
+}
+
+.filter-select :deep(.el-input__wrapper:hover) {
+  border-color: rgba(58, 125, 68, 0.4);
+  box-shadow: 0 2px 8px rgba(58, 125, 68, 0.1);
+}
+
+.filter-select :deep(.el-input.is-focus .el-input__wrapper) {
+  border-color: #3a7d44;
+  box-shadow: 0 0 0 2px rgba(58, 125, 68, 0.1);
+}
+
+.filter-select :deep(.el-input__inner) {
+  color: #1a472a;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.filter-select :deep(.el-select__placeholder) {
+  color: rgba(26, 71, 42, 0.5);
+  font-size: 13px;
+}
+
+.filter-select :deep(.el-select__caret) {
+  color: rgba(58, 125, 68, 0.7);
+}
+
+/* 响应式布局 */
+@media (max-width: 1200px) {
+  .filter-row {
+    gap: 15px;
+  }
+
+  .filter-item {
+    min-width: 180px;
+  }
+
+  .filter-select {
+    width: 140px;
+  }
+}
+
+@media (max-width: 768px) {
+  .filter-row {
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .filter-item {
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+    min-width: unset;
+    gap: 8px;
+  }
+
+  .filter-label {
+    min-width: unset;
+  }
+
+  .filter-select {
+    width: 100%;
+  }
+
+  .filter-actions {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .filter-actions .el-button {
+    flex: 1;
+  }
+}
+
+/* ========== Batch Bar ========== */
+.batch-bar {
+  background: linear-gradient(135deg, rgba(254, 243, 199, 0.9), rgba(254, 249, 195, 0.9));
+  border: 1px solid rgba(245, 158, 11, 0.2);
+  border-left: 4px solid #f59e0b;
+  border-radius: 12px;
+}
+
+.batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.batch-info {
+  color: #b45309;
+  font-size: 14px;
+  font-weight: 500;
+  margin-right: 8px;
+}
+
+/* ========== Log Card ========== */
 .log-card {
-  background: white;
-  border-radius: 10px;
-  padding: 18px;
-  box-shadow: 0 4px 10px rgba(46, 125, 50, 0.1);
-  border-left: 4px solid #ef5350;
+  border-radius: 16px;
+  border: 1px solid rgba(71, 85, 99, 0.1);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
 }
-.log-header {
+
+.log-card :deep(.el-card__header) {
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(71, 85, 99, 0.08);
+  background: linear-gradient(180deg, rgba(240, 253, 244, 0.5) 0%, transparent 100%);
+}
+
+.card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
 }
-.log-type {
-  font-size: 16px;
+
+.header-title {
+  font-size: 15px;
   font-weight: 600;
-  color: #c62828;
+  color: #1a472a;
 }
-.log-time {
-  font-size: 12px;
-  color: #81c784;
-}
-.log-body {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-.log-body p {
-  margin: 0;
+
+/* ========== Table Styles ========== */
+:deep(.el-table) {
   font-size: 13px;
-  color: #2e7d32;
+  --el-table-header-bg-color: #f8faf8;
+  --el-table-row-hover-bg-color: #f0fdf4;
 }
+
+:deep(.el-table th.el-table__cell) {
+  background: linear-gradient(180deg, #f0fdf4 0%, #f8faf8 100%);
+  color: #1a472a;
+  font-weight: 600;
+}
+
+:deep(.el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell) {
+  background: rgba(240, 253, 244, 0.4);
+}
+
+.unit {
+  color: #64748b;
+  font-size: 12px;
+  margin-left: 2px;
+}
+
+/* ========== Pagination ========== */
+.pagination-wrapper {
+  display: flex;
+  justify-content: center;
+  padding: 20px 0;
+}
+
+:deep(.el-pagination .el-pager li.is-active) {
+  background: linear-gradient(135deg, #1a472a, #3a7d44);
+  border-radius: 6px;
+}
+
+/* ========== Empty State ========== */
 .empty-state {
   text-align: center;
-  padding: 80px 0;
-  color: #81c784;
+  padding: 80px 20px;
+  color: #64748b;
 }
-.icon-empty {
-  font-size: 48px;
-  margin-bottom: 15px;
-  display: inline-block;
+
+.empty-icon {
+  font-size: 56px;
+  margin-bottom: 16px;
 }
-.loading-state {
-  text-align: center;
-  padding: 80px 0;
-  color: #2e7d32;
+
+.empty-text {
+  font-size: 15px;
+  color: #64748b;
 }
-.spinner {
-  display: inline-block;
-  width: 20px;
-  height: 20px;
-  border: 3px solid rgba(46, 125, 50, 0.2);
-  border-radius: 50%;
-  border-top-color: #2e7d32;
-  animation: spin 1s ease-in-out infinite;
-  margin-bottom: 15px;
+
+/* ========== Badges ========== */
+.badge-success :deep(.el-badge__content) {
+  background: linear-gradient(135deg, #22c55e, #16a34a);
 }
-@keyframes spin {
-  to { transform: rotate(360deg); }
+
+.badge-warning :deep(.el-badge__content) {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+}
+
+/* ========== Dialog Details ========== */
+.log-details {
+  padding: 10px 0;
+}
+
+.detail-item {
+  display: flex;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(71, 85, 99, 0.08);
+}
+
+.detail-item:last-child {
+  border-bottom: none;
+}
+
+.detail-item .label {
+  width: 100px;
+  color: #64748b;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.detail-item .value {
+  color: #1a472a;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* ========== Select ========== */
+/* 这些样式已经在filter部分统一处理了 */
+
+/* ========== Responsive ========== */
+@media (max-width: 768px) {
+  .warning-page {
+    padding: 16px;
+  }
+
+  .page-header {
+    padding: 18px 20px;
+  }
+
+  .page-header h2 {
+    font-size: 18px;
+  }
 }
 </style>

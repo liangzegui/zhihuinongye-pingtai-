@@ -13,9 +13,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.Instant;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -143,8 +141,8 @@ public class AdminController {
 
     @PutMapping("/users/{id}")
     public Result<Void> updateUser(@PathVariable Integer id,
-                                   @RequestBody Map<String, String> data,
-                                   HttpServletRequest request) {
+            @RequestBody Map<String, String> data,
+            HttpServletRequest request) {
         if (!isAdminRequest(request)) {
             return Result.error(403, "仅管理员可访问");
         }
@@ -181,8 +179,7 @@ public class AdminController {
                 id,
                 username != null ? username.trim() : null,
                 role != null ? role.toLowerCase() : null,
-                password != null ? password.trim() : null
-        );
+                password != null ? password.trim() : null);
 
         if (!success) {
             return Result.error(400, "更新失败，用户名可能已存在");
@@ -213,74 +210,6 @@ public class AdminController {
         }
 
         return Result.ok("删除用户成功");
-    }
-
-    // ==================== 自动保存管理 ====================
-
-    @GetMapping("/autosave")
-    public Result<Map<String, Object>> getAutoSaveConfig(HttpServletRequest request) {
-        if (!isAdminRequest(request)) {
-            return Result.error(403, "仅管理员可访问");
-        }
-
-        Map<String, Object> config = new HashMap<>();
-        config.put("enabled", dataAutoSaveService.isEnabled());
-        config.put("intervalSeconds", dataAutoSaveService.getSaveIntervalSeconds());
-
-        long lastSaveTime = dataAutoSaveService.getLastSaveTime();
-        if (lastSaveTime > 0) {
-            LocalDateTime lastSave = LocalDateTime.ofInstant(
-                    Instant.ofEpochMilli(lastSaveTime), ZoneId.systemDefault());
-            config.put("lastSaveTime", lastSave.toString());
-        } else {
-            config.put("lastSaveTime", null);
-        }
-
-        return Result.success(config);
-    }
-
-    @PostMapping("/autosave")
-    public Result<Map<String, Object>> updateAutoSaveConfig(@RequestBody Map<String, Object> configData,
-                                                             HttpServletRequest request) {
-        if (!isAdminRequest(request)) {
-            return Result.error(403, "仅管理员可访问");
-        }
-
-        String loginUsername = String.valueOf(request.getAttribute("loginUsername"));
-
-        if (configData.containsKey("enabled")) {
-            boolean enabled = Boolean.parseBoolean(String.valueOf(configData.get("enabled")));
-            dataAutoSaveService.setEnabled(enabled, loginUsername);
-        } else {
-            // 即使只改间隔，也更新配置人
-            dataAutoSaveService.setConfiguredBy(loginUsername);
-        }
-
-        if (configData.containsKey("intervalSeconds")) {
-            long interval = Long.parseLong(String.valueOf(configData.get("intervalSeconds")));
-            dataAutoSaveService.setSaveIntervalSeconds(interval);
-        }
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("enabled", dataAutoSaveService.isEnabled());
-        result.put("intervalSeconds", dataAutoSaveService.getSaveIntervalSeconds());
-        result.put("configuredBy", dataAutoSaveService.getConfiguredBy());
-        result.put("message", "配置已更新");
-        return Result.success(result);
-    }
-
-    @PostMapping("/autosave/trigger")
-    public Result<Map<String, Object>> triggerSave(HttpServletRequest request) {
-        if (!isAdminRequest(request)) {
-            return Result.error(403, "仅管理员可访问");
-        }
-
-        String loginUsername = String.valueOf(request.getAttribute("loginUsername"));
-        boolean success = dataAutoSaveService.manualSave(loginUsername);
-        Map<String, Object> result = new HashMap<>();
-        result.put("success", success);
-        result.put("message", success ? "数据保存成功" : "数据保存失败：设备离线或无有效数据");
-        return Result.success(result);
     }
 
     // ==================== 保存数据管理（CRUD） ====================
@@ -347,8 +276,8 @@ public class AdminController {
 
     @PutMapping("/env-data/{id}")
     public Result<Void> updateEnvData(@PathVariable Long id,
-                                      @RequestBody Map<String, Object> data,
-                                      HttpServletRequest request) {
+            @RequestBody Map<String, Object> data,
+            HttpServletRequest request) {
         if (!isAdminRequest(request)) {
             return Result.error(403, "仅管理员可访问");
         }
@@ -402,7 +331,7 @@ public class AdminController {
 
     @PostMapping("/env-data/batch-delete")
     public Result<Map<String, Object>> batchDeleteEnvData(@RequestBody Map<String, Object> payload,
-                                                           HttpServletRequest request) {
+            HttpServletRequest request) {
         if (!isAdminRequest(request)) {
             return Result.error(403, "仅管理员可访问");
         }
@@ -435,7 +364,7 @@ public class AdminController {
             return Result.error(400, "删除参数无效");
         }
 
-        int deleted = envDataMapper.deleteBatchIds(ids);
+        int deleted = envDataMapper.deleteByIds(ids);
         Map<String, Object> result = new HashMap<>();
         result.put("deletedCount", deleted);
         result.put("requestedCount", ids.size());

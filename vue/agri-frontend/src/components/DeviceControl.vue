@@ -19,34 +19,77 @@
           <el-icon><Tools /></el-icon>
           <span>运行模式</span>
         </div>
-        <div class="mode-switch">
-          <span class="switch-label">自动模式</span>
-          <el-switch
-            v-model="isManualMode"
-            :loading="modeLoading"
-            active-color="#f56c6c"
-            inactive-color="#67c23a"
-            @change="handleModeChange"
-          />
-          <span class="switch-label">手动模式</span>
+
+        <!-- 高级模式切换器 -->
+        <div class="mode-switcher">
+          <div
+            class="mode-option"
+            :class="{ active: !isManualMode, loading: modeLoading && isManualMode }"
+            @click="!modeLoading && isManualMode && handleModeChange(false)"
+          >
+            <div class="mode-icon-wrapper auto">
+              <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+              </svg>
+              <div class="mode-pulse"></div>
+            </div>
+            <div class="mode-text">
+              <span class="mode-name">自动模式</span>
+              <span class="mode-desc">智能环境调控</span>
+            </div>
+            <div v-if="!isManualMode" class="mode-active-indicator">
+              <span class="indicator-dot"></span>
+              <span>运行中</span>
+            </div>
+          </div>
+
+          <div class="mode-divider">
+            <div class="divider-line"></div>
+            <div class="divider-icon" :class="{ switching: modeLoading }">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/>
+              </svg>
+            </div>
+            <div class="divider-line"></div>
+          </div>
+
+          <div
+            class="mode-option"
+            :class="{ active: isManualMode, loading: modeLoading && !isManualMode }"
+            @click="!modeLoading && !isManualMode && handleModeChange(true)"
+          >
+            <div class="mode-icon-wrapper manual">
+              <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+              </svg>
+            </div>
+            <div class="mode-text">
+              <span class="mode-name">手动模式</span>
+              <span class="mode-desc">精准设备控制</span>
+            </div>
+            <div v-if="isManualMode" class="mode-active-indicator warning">
+              <span class="indicator-dot"></span>
+              <span>已启用</span>
+            </div>
+          </div>
         </div>
-        <div class="mode-description">
-          <el-alert
-            v-if="isManualMode"
-            type="warning"
-            :closable="false"
-            show-icon
-          >
-            手动模式下，设备需要手动控制开关状态
-          </el-alert>
-          <el-alert
-            v-else
-            type="success"
-            :closable="false"
-            show-icon
-          >
-            自动模式下，系统将根据阈值自动控制设备
-          </el-alert>
+
+        <div class="mode-status-bar">
+          <div class="status-content" :class="isManualMode ? 'manual' : 'auto'">
+            <svg v-if="!isManualMode" class="status-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8z" opacity="0.3"/>
+              <path d="M12 6v6l4 2"/>
+            </svg>
+            <svg v-else class="status-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/>
+              <line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <span class="status-text">
+              {{ isManualMode ? '手动模式已启用，设备需手动操作' : '自动模式运行中，系统根据阈值智能调控' }}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -322,21 +365,20 @@ export default {
     },
 
     // 切换模式
-    async handleModeChange(value) {
+    async handleModeChange(toManual) {
       this.modeLoading = true
       try {
-        const res = await setMode(value)
+        const res = await setMode(toManual)
         if (res && res.code === 200) {
-          ElMessage.success(`已切换到${value ? '手动' : '自动'}模式`)
-          this.$emit('mode-changed', value)
+          this.isManualMode = toManual
+          ElMessage.success(`已切换到${toManual ? '手动' : '自动'}模式`)
+          this.$emit('mode-changed', toManual)
         } else {
           ElMessage.error('模式切换失败: ' + (res?.message || '未知错误'))
-          this.isManualMode = !value
         }
       } catch (error) {
         console.error('模式切换异常:', error)
         ElMessage.error('模式切换失败：' + (error.response?.data?.message || error.message || '网络错误'))
-        this.isManualMode = !value
       } finally {
         this.modeLoading = false
       }
@@ -503,12 +545,48 @@ export default {
 </script>
 
 <style scoped>
+/* Design tokens: 智慧农业主题
+   Primary: #1a472a (深森林绿)  Accent: #3a7d44 (森林绿)
+   Warning: #d97706 (琥珀橙)    Surface: #f0fdf4 (薄荷绿)
+   Text: #1e293b / #475569 / #94a3b8
+   Border: rgba(71, 85, 99, 0.1) */
+
 .device-control-panel {
   width: 100%;
 }
 
 .control-card {
-  border-radius: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(71, 85, 99, 0.1);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.control-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #1a472a, #3a7d44, #22c55e);
+  opacity: 0.8;
+}
+
+.control-card:hover {
+  box-shadow: 0 8px 32px rgba(26, 71, 42, 0.1);
+}
+
+:deep(.el-card__header) {
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(71, 85, 99, 0.08);
+  background: linear-gradient(180deg, rgba(240, 253, 244, 0.5) 0%, transparent 100%);
+}
+
+:deep(.el-card__body) {
+  padding: 18px 20px;
 }
 
 .card-header {
@@ -520,16 +598,22 @@ export default {
 .header-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1a472a;
+  letter-spacing: -0.01em;
+}
+
+.header-title .el-icon {
   font-size: 18px;
-  font-weight: bold;
-  color: #303133;
+  color: #3a7d44;
 }
 
 .control-section {
-  margin-bottom: 30px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid #ebeef5;
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgba(71, 85, 99, 0.08);
 }
 
 .control-section:last-child {
@@ -541,112 +625,416 @@ export default {
 .section-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 16px;
+  gap: 6px;
+  font-size: 11px;
   font-weight: 600;
-  color: #606266;
-  margin-bottom: 15px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 14px;
 }
 
-.mode-switch {
+.section-title .el-icon {
+  font-size: 14px;
+  color: #3a7d44;
+}
+
+/* ========== 高级模式切换器 ========== */
+.mode-switcher {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border-radius: 16px;
+  padding: 8px;
+  border: 1px solid rgba(71, 85, 99, 0.1);
+}
+
+.mode-option {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.mode-option::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.mode-option:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.mode-option.active {
+  background: #fff;
+  box-shadow: 0 4px 20px rgba(26, 71, 42, 0.12);
+}
+
+.mode-option.active::before {
+  opacity: 1;
+  background: linear-gradient(135deg, transparent 60%, rgba(58, 125, 68, 0.05) 100%);
+}
+
+.mode-option.loading {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.mode-icon-wrapper {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 15px;
-  margin-bottom: 15px;
+  position: relative;
+  transition: all 0.3s;
 }
 
-.switch-label {
+.mode-icon-wrapper.auto {
+  background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
+  color: #15803d;
+}
+
+.mode-icon-wrapper.manual {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  color: #b45309;
+}
+
+.mode-option.active .mode-icon-wrapper.auto {
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.4);
+}
+
+.mode-option.active .mode-icon-wrapper.manual {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+}
+
+.mode-icon {
+  width: 22px;
+  height: 22px;
+  position: relative;
+  z-index: 1;
+}
+
+.mode-pulse {
+  position: absolute;
+  inset: -4px;
+  border-radius: 16px;
+  opacity: 0;
+  animation: none;
+}
+
+.mode-option.active .mode-pulse {
+  animation: mode-pulse 2s ease-out infinite;
+}
+
+.mode-option.active .mode-icon-wrapper.auto .mode-pulse {
+  background: rgba(34, 197, 94, 0.3);
+}
+
+.mode-option.active .mode-icon-wrapper.manual .mode-pulse {
+  background: rgba(245, 158, 11, 0.3);
+}
+
+@keyframes mode-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+.mode-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.mode-name {
   font-size: 14px;
-  color: #606266;
+  font-weight: 600;
+  color: #475569;
+  transition: color 0.3s;
+  white-space: nowrap;
 }
 
-.mode-description {
-  margin-top: 15px;
+.mode-option.active .mode-name {
+  color: #1e293b;
+}
+
+.mode-desc {
+  font-size: 11px;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mode-active-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
+  color: #15803d;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.mode-active-indicator.warning {
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  color: #b45309;
+}
+
+.indicator-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: indicator-blink 1.5s ease-in-out infinite;
+}
+
+@keyframes indicator-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* 分割线 - 水平布局 */
+.mode-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  gap: 10px;
+}
+
+.divider-line {
+  height: 1px;
+  flex: 1;
+  background: linear-gradient(90deg, transparent, rgba(71, 85, 99, 0.15), transparent);
+}
+
+.divider-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(71, 85, 99, 0.08);
+  color: #94a3b8;
+  transition: all 0.3s;
+  flex-shrink: 0;
+}
+
+.divider-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.divider-icon.switching {
+  animation: divider-spin 1s linear infinite;
+  background: rgba(58, 125, 68, 0.1);
+  color: #3a7d44;
+}
+
+@keyframes divider-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(180deg); }
+}
+
+/* 状态栏 */
+.mode-status-bar {
+  margin-top: 12px;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.status-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.3s;
+}
+
+.status-content.auto {
+  background: linear-gradient(135deg, rgba(240, 253, 244, 0.9), rgba(220, 252, 231, 0.9));
+  color: #166534;
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.status-content.manual {
+  background: linear-gradient(135deg, rgba(254, 252, 232, 0.9), rgba(254, 249, 195, 0.9));
+  color: #a16207;
+  border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.status-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.status-text {
+  flex: 1;
+  line-height: 1.4;
 }
 
 .device-switches {
   display: flex;
   flex-direction: column;
-  gap: 15px;
+  gap: 10px;
 }
 
 .switch-item {
   display: flex;
   align-items: center;
-  gap: 15px;
-  padding: 15px;
-  background: #f8f9fa;
-  border-radius: 8px;
-  transition: all 0.3s;
+  gap: 14px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border-radius: 12px;
+  border: 1px solid rgba(71, 85, 99, 0.06);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .switch-item:hover {
-  background: #f0f2f5;
+  background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);
+  transform: translateX(4px);
+  box-shadow: 0 4px 12px rgba(26, 71, 42, 0.06);
 }
 
 .switch-icon {
-  font-size: 32px;
-  width: 50px;
-  height: 50px;
+  font-size: 24px;
+  width: 46px;
+  height: 46px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: 12px;
+  transition: all 0.3s;
 }
 
 .pump-icon {
-  background: linear-gradient(135deg, #409eff 0%, #66b1ff 100%);
+  background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.15);
 }
 
 .fan-icon {
-  background: linear-gradient(135deg, #67c23a 0%, #85ce61 100%);
+  background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
+  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.15);
 }
 
 .light-icon {
-  background: linear-gradient(135deg, #e6a23c 0%, #ebb563 100%);
+  background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.15);
 }
 
 .switch-info {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 2px;
 }
 
 .switch-name {
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 600;
-  color: #303133;
+  color: #1e293b;
 }
 
 .switch-status {
-  font-size: 12px;
-  color: #909399;
+  font-size: 11px;
+  color: #94a3b8;
 }
 
 .threshold-form {
-  margin-top: 15px;
+  margin-top: 12px;
+}
+
+.threshold-form :deep(.el-form-item) {
+  margin-bottom: 16px;
+}
+
+.threshold-form :deep(.el-form-item__label) {
+  font-size: 13px;
+  color: #475569;
+  font-weight: 500;
 }
 
 .threshold-input-group {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-.range-separator {
-  color: #909399;
-  font-weight: bold;
+  gap: 8px;
 }
 
 .unit {
-  color: #606266;
-  font-size: 14px;
-  min-width: 30px;
+  color: #94a3b8;
+  font-size: 12px;
+  min-width: 28px;
+  font-weight: 500;
+}
+
+.threshold-desc {
+  font-size: 11px !important;
+  color: #94a3b8 !important;
+  line-height: 1.5;
+  margin-top: 4px;
 }
 
 :deep(.el-input-number) {
   width: 140px;
+}
+
+:deep(.el-tag) {
+  border: none;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 20px;
+}
+
+:deep(.el-tag--success) {
+  background: linear-gradient(135deg, #dcfce7, #bbf7d0);
+  color: #15803d;
+}
+
+:deep(.el-tag--warning) {
+  background: linear-gradient(135deg, #fef3c7, #fde68a);
+  color: #b45309;
+}
+
+:deep(.el-switch__core) {
+  border-radius: 12px;
+  height: 24px;
+}
+
+:deep(.el-switch__action) {
+  width: 20px;
+  height: 20px;
 }
 </style>

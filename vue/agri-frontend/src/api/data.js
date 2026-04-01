@@ -25,7 +25,9 @@ export const getHistoricalData = (params = {}) => {
   if (params.sensorType) {
     queryParams.sensorType = params.sensorType
   }
-  console.log('API请求参数:', queryParams)
+  if (params.sortOrder) {
+    queryParams.sortOrder = params.sortOrder
+  }
   return request.get('/api/data/historical', { params: queryParams })
 }
 

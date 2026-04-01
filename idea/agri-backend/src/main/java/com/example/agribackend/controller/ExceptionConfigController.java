@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.example.agribackend.common.Result;
 import com.example.agribackend.entity.ExceptionConfigEntity;
 import com.example.agribackend.mapper.ExceptionConfigMapper;
+import com.example.agribackend.service.UserService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -21,6 +23,9 @@ public class ExceptionConfigController {
 
     @Autowired
     private ExceptionConfigMapper configMapper;
+
+    @Autowired
+    private UserService userService;
 
     /**
      * 获取所有异常配置（按分组返回）
@@ -41,14 +46,14 @@ public class ExceptionConfigController {
                             item.put("value", entity.getConfigValue());
                             item.put("description", entity.getDescription());
                             return item;
-                        }, Collectors.toList())
-                ));
+                        }, Collectors.toList())));
 
         return Result.success(grouped);
     }
 
     /**
      * 获取指定分组的配置
+     * 
      * @param group 分组名：detection / notification / handling / severity
      */
     @GetMapping("/group/{group}")
@@ -68,7 +73,11 @@ public class ExceptionConfigController {
      * 请求体格式：{ "detection_enabled": "true", "detection_interval": "30", ... }
      */
     @PutMapping
-    public Result<String> updateConfig(@RequestBody Map<String, String> configs) {
+    public Result<String> updateConfig(@RequestBody Map<String, String> configs,
+            HttpServletRequest httpRequest) {
+        if (!isAdminRequest(httpRequest)) {
+            return Result.error(403, "仅管理员可执行此操作");
+        }
         if (configs == null || configs.isEmpty()) {
             return Result.error(400, "配置不能为空");
         }
@@ -87,7 +96,8 @@ public class ExceptionConfigController {
             UpdateWrapper<ExceptionConfigEntity> uw = new UpdateWrapper<>();
             uw.eq("config_key", key).set("config_value", value);
             int rows = configMapper.update(null, uw);
-            if (rows > 0) updated++;
+            if (rows > 0)
+                updated++;
         }
 
         return Result.success("已更新 " + updated + " 项配置");
@@ -98,7 +108,11 @@ public class ExceptionConfigController {
      */
     @PutMapping("/{key}")
     public Result<String> updateSingleConfig(@PathVariable String key,
-                                             @RequestBody Map<String, String> body) {
+            @RequestBody Map<String, String> body,
+            HttpServletRequest httpRequest) {
+        if (!isAdminRequest(httpRequest)) {
+            return Result.error(403, "仅管理员可执行此操作");
+        }
         String value = body.get("value");
         if (value == null) {
             return Result.error(400, "缺少 value 字段");
@@ -119,7 +133,10 @@ public class ExceptionConfigController {
      * 重置所有配置为默认值
      */
     @PostMapping("/reset")
-    public Result<String> resetToDefaults() {
+    public Result<String> resetToDefaults(HttpServletRequest httpRequest) {
+        if (!isAdminRequest(httpRequest)) {
+            return Result.error(403, "仅管理员可执行此操作");
+        }
         Map<String, String> defaults = getDefaultValues();
         for (Map.Entry<String, String> entry : defaults.entrySet()) {
             UpdateWrapper<ExceptionConfigEntity> uw = new UpdateWrapper<>();
@@ -127,6 +144,14 @@ public class ExceptionConfigController {
             configMapper.update(null, uw);
         }
         return Result.success("已恢复默认设置");
+    }
+
+    private boolean isAdminRequest(HttpServletRequest request) {
+        Object loginUsername = request.getAttribute("loginUsername");
+        if (loginUsername == null) {
+            return false;
+        }
+        return userService.isAdmin(String.valueOf(loginUsername));
     }
 
     /** 配置项校验 */
@@ -141,7 +166,8 @@ public class ExceptionConfigController {
         if ("detection_interval".equals(key)) {
             try {
                 int interval = Integer.parseInt(value);
-                if (interval < 10 || interval > 3600) return "检测间隔需在 10~3600 秒之间";
+                if (interval < 10 || interval > 3600)
+                    return "检测间隔需在 10~3600 秒之间";
             } catch (NumberFormatException e) {
                 return "检测间隔必须为整数";
             }
@@ -149,7 +175,8 @@ public class ExceptionConfigController {
         if ("handling_cooldown".equals(key)) {
             try {
                 int cd = Integer.parseInt(value);
-                if (cd < 1 || cd > 60) return "冷却时间需在 1~60 分钟之间";
+                if (cd < 1 || cd > 60)
+                    return "冷却时间需在 1~60 分钟之间";
             } catch (NumberFormatException e) {
                 return "冷却时间必须为整数";
             }
@@ -157,7 +184,8 @@ public class ExceptionConfigController {
         if ("notify_popup_duration".equals(key)) {
             try {
                 int d = Integer.parseInt(value);
-                if (d < 1 || d > 60) return "弹窗时长需在 1~60 秒之间";
+                if (d < 1 || d > 60)
+                    return "弹窗时长需在 1~60 秒之间";
             } catch (NumberFormatException e) {
                 return "弹窗时长必须为整数";
             }
@@ -165,7 +193,8 @@ public class ExceptionConfigController {
         if (key.contains("ratio")) {
             try {
                 double r = Double.parseDouble(value);
-                if (r < 0.1 || r > 10.0) return "比例系数需在 0.1~10.0 之间";
+                if (r < 0.1 || r > 10.0)
+                    return "比例系数需在 0.1~10.0 之间";
             } catch (NumberFormatException e) {
                 return "比例系数必须为数字";
             }

@@ -17,7 +17,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 @RestController
-@RequestMapping({"/auth", "/api/auth"})
+@RequestMapping({ "/auth", "/api/auth" })
 public class AuthController {
     private static final Logger logger = LoggerFactory.getLogger(AuthController.class);
 
@@ -49,6 +49,12 @@ public class AuthController {
     public Result<Map<String, Object>> login(@RequestBody Map<String, String> loginData) {
         String username = loginData.get("username");
         String password = loginData.get("password");
+
+        // 0) 基本参数校验
+        if (username == null || username.trim().isEmpty() || password == null || password.isEmpty()) {
+            return Result.error(400, "用户名和密码不能为空");
+        }
+        username = username.trim();
 
         // 1) 服务端登录锁定检查
         if (loginAttemptService.isLocked(username)) {
@@ -112,12 +118,26 @@ public class AuthController {
         if (!cachedCaptcha.equalsIgnoreCase(userCaptcha.trim())) {
             return Result.error(400, "验证码错误");
         }
-        // 4) 密码格式校验
+        // 4) 用户名格式校验
+        if (username == null || username.trim().isEmpty()) {
+            return Result.error(400, "用户名不能为空");
+        }
+        username = username.trim();
+        if (username.length() < 2 || username.length() > 20) {
+            return Result.error(400, "用户名长度需在2-20个字符之间");
+        }
+        if (!username.matches("^[\\u4e00-\\u9fa5a-zA-Z0-9_@.]+$")) {
+            return Result.error(400, "用户名只能包含中文、字母、数字、下划线、@和点");
+        }
+        // 5) 密码格式校验
+        if (password == null || password.isEmpty()) {
+            return Result.error(400, "密码不能为空");
+        }
         String pwdError = PasswordValidator.validate(password);
         if (pwdError != null) {
             return Result.error(400, pwdError);
         }
-        // 5) 注册
+        // 6) 注册
         if (userService.register(username, password, role)) {
             logger.info("用户 [{}] 注册成功", username);
             return Result.ok("注册成功");

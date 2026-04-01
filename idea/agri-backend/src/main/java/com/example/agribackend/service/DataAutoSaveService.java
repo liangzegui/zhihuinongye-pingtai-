@@ -1,6 +1,5 @@
 package com.example.agribackend.service;
 
-import com.example.agribackend.dto.EnvDataDTO;
 import com.example.agribackend.entity.EnvDataEntity;
 import com.example.agribackend.mapper.EnvDataMapper;
 import org.slf4j.Logger;
@@ -10,7 +9,6 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -23,9 +21,6 @@ public class DataAutoSaveService {
     private static final Logger logger = LoggerFactory.getLogger(DataAutoSaveService.class);
     // IoTDA数据新鲜度窗口：5分钟
     private static final long IOTDA_FRESH_WINDOW_MILLIS = 5 * 60 * 1000L;
-
-    @Autowired
-    private RealTimeService realTimeService;
 
     @Autowired
     private EnvDataMapper envDataMapper;
@@ -90,12 +85,6 @@ public class DataAutoSaveService {
      */
     private boolean saveDataFromRealTime(String saveUsername) {
         try {
-            // 设备离线时禁止自动保存
-            if (!isDeviceOnline()) {
-                logger.warn("[数据保存] 设备离线，跳过自动保存");
-                return false;
-            }
-
             // 优先通道1：直接从ESP32获取实时数据（与"立即保存"使用相同数据源）
             Map<String, Object> esp32Data = null;
             try {
@@ -114,8 +103,10 @@ public class DataAutoSaveService {
 
                 Double soilAdc = getDoubleFromKeys(esp32Data, "soilAO", "soil", "soilAdc", "soilMoisture");
                 if (soilAdc != null) {
-                    if (soilAdc < 0) soilAdc = 0.0;
-                    if (soilAdc > 4095) soilAdc = 4095.0;
+                    if (soilAdc < 0)
+                        soilAdc = 0.0;
+                    if (soilAdc > 4095)
+                        soilAdc = 4095.0;
                     entity.setSoilAdc(soilAdc.intValue());
                     entity.setSoilMoisture(Math.max(0, Math.min(100, (4095 - soilAdc) / 40.95)));
                 }
@@ -147,6 +138,13 @@ public class DataAutoSaveService {
 
             entity.setSaveUsername(saveUsername);
             entity.setCollectTime(LocalDateTime.now());
+
+            // 异常数据检测：传感器离线或异常时通常返回全零数据，不应入库
+            if (isAbnormalData(entity)) {
+                logger.warn("[数据保存] 检测到异常数据（多项关键指标为0），跳过保存: 温度={}, 湿度={}, 土壤ADC={}, 光照={}",
+                        entity.getTemperature(), entity.getHumidity(), entity.getSoilAdc(), entity.getLightIntensity());
+                return false;
+            }
 
             envDataMapper.insert(entity);
             logger.info("[数据保存] 成功保存数据: 温度={}, 湿度={}, 土壤={}%, 土壤ADC={}, 光照={}, CO2={}",
@@ -208,11 +206,18 @@ public class DataAutoSaveService {
                 soilValue = Math.max(0, Math.min(100, (4095 - soilAdcValue) / 40.95));
             }
             entity.setSoilMoisture(soilValue != null ? soilValue : 0.0);
-            entity.setSoilAdc(soilAdcValue);  // 保存土壤ADC原始值
+            entity.setSoilAdc(soilAdcValue); // 保存土壤ADC原始值
             entity.setLightIntensity(parseInteger(data.get("lightIntensity")));
             entity.setCo2(parseInteger(data.get("co2")));
             entity.setSaveUsername(normalizeSaveUsername(saveUsername, "手动保存"));
             entity.setCollectTime(LocalDateTime.now());
+
+            // 异常数据检测
+            if (isAbnormalData(entity)) {
+                logger.warn("[数据保存] 检测到异常数据（多项关键指标为0），拒绝保存: 温度={}, 湿度={}, 土壤ADC={}, 光照={}",
+                        entity.getTemperature(), entity.getHumidity(), entity.getSoilAdc(), entity.getLightIntensity());
+                return false;
+            }
 
             envDataMapper.insert(entity);
             lastSaveTime = System.currentTimeMillis();
@@ -370,7 +375,8 @@ public class DataAutoSaveService {
     private Double getDoubleFromKeys(Map<String, Object> map, String... keys) {
         for (String key : keys) {
             Double val = getDoubleValue(map, key);
-            if (val != null) return val;
+            if (val != null)
+                return val;
         }
         return null;
     }
@@ -381,9 +387,29 @@ public class DataAutoSaveService {
     private Integer getIntegerFromKeys(Map<String, Object> map, String... keys) {
         for (String key : keys) {
             Integer val = getIntegerValue(map, key);
-            if (val != null) return val;
+            if (val != null)
+                return val;
         }
         return null;
+    }
+
+    /**
+     * 检测异常数据：当温度、湿度、土壤ADC、光照中有3项及以上为零值或null时，
+     * 判定为传感器离线或数据异常，不应入库。
+     * 典型场景：ESP32刚启动、传感器断开、通信故障时会返回全零数据。
+     */
+    private boolean isAbnormalData(EnvDataEntity entity) {
+        int zeroCount = 0;
+        if (entity.getTemperature() == null || entity.getTemperature() == 0.0)
+            zeroCount++;
+        if (entity.getHumidity() == null || entity.getHumidity() == 0.0)
+            zeroCount++;
+        if (entity.getSoilAdc() == null || entity.getSoilAdc() == 0)
+            zeroCount++;
+        if (entity.getLightIntensity() == null || entity.getLightIntensity() == 0)
+            zeroCount++;
+        // 3项及以上为零视为异常（允许个别传感器偶尔读到0）
+        return zeroCount >= 3;
     }
 
     /**

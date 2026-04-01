@@ -3,10 +3,13 @@ package com.example.agribackend.controller;
 import com.example.agribackend.common.Result;
 import com.example.agribackend.entity.EnvDataEntity;
 import com.example.agribackend.mapper.EnvDataMapper;
-import com.example.agribackend.service.impl.IoTDAServiceImpl;
+import com.example.agribackend.service.IoTDAService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -28,6 +31,11 @@ import java.util.Map;
 @RequestMapping("/api/iotda")
 public class IoTDAWebhookController {
 
+    private static final Logger logger = LoggerFactory.getLogger(IoTDAWebhookController.class);
+
+    @Value("${iotda.webhook-token:}")
+    private String webhookToken;
+
     @Autowired
     private EnvDataMapper envDataMapper;
 
@@ -35,17 +43,22 @@ public class IoTDAWebhookController {
     private ObjectMapper objectMapper;
 
     @Autowired
-    private IoTDAServiceImpl ioTDAService;
+    private IoTDAService ioTDAService;
 
     /**
      * 接收华为云IoTDA数据转发的Webhook
      * IoTDA会以POST方式推送设备上报的数据
      */
     @PostMapping("/webhook")
-    public Result<String> receiveIoTDAData(@RequestBody String payload) {
+    public Result<String> receiveIoTDAData(@RequestBody String payload,
+            @RequestHeader(value = "X-Webhook-Token", required = false) String token) {
+        if (!webhookToken.isEmpty() && !webhookToken.equals(token)) {
+            logger.warn("Webhook token验证失败");
+            return Result.error(401, "认证失败");
+        }
         try {
-            System.out.println("====== 收到IoTDA数据推送 ======");
-            System.out.println(payload);
+            logger.info("====== 收到IoTDA数据推送 ======");
+            logger.info("{}", payload);
 
             // 解析IoTDA推送的JSON数据
             JsonNode root = objectMapper.readTree(payload);
@@ -104,6 +117,12 @@ public class IoTDAWebhookController {
                 envData.setSaveUsername("IoTDA设备上报");
                 envData.setCollectTime(LocalDateTime.now());
 
+                // 异常数据检测：传感器离线或故障时返回全零，不应入库
+                if (isAbnormalData(envData)) {
+                    logger.warn("[数据检测] IoTDA上报数据异常（多项关键指标为0），跳过保存");
+                    return Result.success("数据异常，已跳过保存");
+                }
+
                 // 保存到数据库
                 envDataMapper.insert(envData);
 
@@ -132,12 +151,12 @@ public class IoTDAWebhookController {
                 // 更新IoTDA服务缓存并广播
                 ioTDAService.updateDeviceStatus(sensorData);
 
-                System.out.println("====== 数据已保存并广播 ======");
-                System.out.println("温度: " + envData.getTemperature() + "℃");
-                System.out.println("湿度: " + envData.getHumidity() + "%");
-                System.out.println("土壤湿度: " + envData.getSoilMoisture() + "%");
-                System.out.println("光照: " + envData.getLightIntensity() + " lux");
-                System.out.println("CO2: " + envData.getCo2() + " ppm");
+                logger.info("====== 数据已保存并广播 ======");
+                logger.info("温度: {}℃", envData.getTemperature());
+                logger.info("湿度: {}%", envData.getHumidity());
+                logger.info("土壤湿度: {}%", envData.getSoilMoisture());
+                logger.info("光照: {} lux", envData.getLightIntensity());
+                logger.info("CO2: {} ppm", envData.getCo2());
 
                 return Result.success("数据接收成功");
             }
@@ -145,8 +164,7 @@ public class IoTDAWebhookController {
             return Result.success("数据格式无效，但已接收");
 
         } catch (Exception e) {
-            System.err.println("处理IoTDA数据失败: " + e.getMessage());
-            e.printStackTrace();
+            logger.error("处理IoTDA数据失败: {}", e.getMessage());
             return Result.error(500, "处理失败: " + e.getMessage());
         }
     }
@@ -156,10 +174,15 @@ public class IoTDAWebhookController {
      * 如果不使用IoTDA数据转发，ESP32可以直接调用此接口
      */
     @PostMapping("/direct")
-    public Result<String> receiveDirectData(@RequestBody String payload) {
+    public Result<String> receiveDirectData(@RequestBody String payload,
+            @RequestHeader(value = "X-Webhook-Token", required = false) String token) {
+        if (!webhookToken.isEmpty() && !webhookToken.equals(token)) {
+            logger.warn("Webhook token验证失败");
+            return Result.error(401, "认证失败");
+        }
         try {
-            System.out.println("====== 收到ESP32直接上报数据 ======");
-            System.out.println(payload);
+            logger.info("====== 收到ESP32直接上报数据 ======");
+            logger.info("{}", payload);
 
             JsonNode root = objectMapper.readTree(payload);
 
@@ -186,12 +209,19 @@ public class IoTDAWebhookController {
 
             envData.setSaveUsername("ESP32直传");
             envData.setCollectTime(LocalDateTime.now());
+
+            // 异常数据检测
+            if (isAbnormalData(envData)) {
+                logger.warn("[数据检测] ESP32直传数据异常（多项关键指标为0），跳过保存");
+                return Result.success("数据异常，已跳过保存");
+            }
+
             envDataMapper.insert(envData);
 
             return Result.success("数据保存成功");
 
         } catch (Exception e) {
-            System.err.println("处理直接上报数据失败: " + e.getMessage());
+            logger.error("处理直接上报数据失败: {}", e.getMessage());
             return Result.error(500, "处理失败: " + e.getMessage());
         }
     }
@@ -202,5 +232,21 @@ public class IoTDAWebhookController {
     @GetMapping("/health")
     public Result<String> healthCheck() {
         return Result.success("IoTDA Webhook服务正常运行");
+    }
+
+    /**
+     * 检测异常数据：温度、湿度、土壤湿度、光照中3项及以上为零/null时视为传感器异常
+     */
+    private boolean isAbnormalData(EnvDataEntity entity) {
+        int zeroCount = 0;
+        if (entity.getTemperature() == null || entity.getTemperature() == 0.0)
+            zeroCount++;
+        if (entity.getHumidity() == null || entity.getHumidity() == 0.0)
+            zeroCount++;
+        if (entity.getSoilMoisture() == null || entity.getSoilMoisture() == 0.0)
+            zeroCount++;
+        if (entity.getLightIntensity() == null || entity.getLightIntensity() == 0)
+            zeroCount++;
+        return zeroCount >= 3;
     }
 }

@@ -51,11 +51,13 @@ pause
 exit /b 1
 
 :found_mysql
-sc query !MYSQL_SVC! 2>nul | findstr "RUNNING" >nul 2>&1
-if !errorlevel! equ 0 (
-    echo   [OK] MySQL 已在运行 (!MYSQL_SVC!)
+:: 用 for /f 捕获结果，避免管道与延迟扩展的 errorlevel 冲突
+set "MYSQL_RUNNING=0"
+for /f "tokens=*" %%a in ('sc query !MYSQL_SVC! 2^>nul ^| findstr "RUNNING"') do set "MYSQL_RUNNING=1"
+if "!MYSQL_RUNNING!"=="1" (
+    echo   [OK] MySQL 已在运行 ^(!MYSQL_SVC!^)
 ) else (
-    echo   --^>  正在启动 MySQL (!MYSQL_SVC!)...
+    echo   --^>  正在启动 MySQL ^(!MYSQL_SVC!^)...
     net start !MYSQL_SVC! >nul 2>&1
     if !errorlevel! equ 0 (
         echo   [OK] MySQL 启动成功

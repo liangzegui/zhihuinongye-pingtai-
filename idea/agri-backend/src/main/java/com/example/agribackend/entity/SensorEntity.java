@@ -1,5 +1,6 @@
 package com.example.agribackend.entity;
 
+import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -14,7 +15,7 @@ public class SensorEntity {
     /**
      * 主键ID，自增
      */
-    @TableId
+    @TableId(type = IdType.AUTO)
     private Integer id;
 
     /**

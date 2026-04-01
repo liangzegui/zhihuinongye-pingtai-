@@ -94,8 +94,8 @@
         </div>
         
         <!-- 注册按钮 -->
-        <button type="submit" :disabled="loading" class="register-btn">
-          <span v-if="loading" class="spinner"></span>
+        <button type="submit" :disabled="loading" class="btn-primary">
+          <span v-if="loading" class="btn-spinner"></span>
           {{ loading ? '注册中...' : '完成注册' }}
         </button>
         
@@ -382,15 +382,10 @@ export default {
 </script>
 
 <style scoped>
-/* 主题色定义（与登录页一致，保持风格统一） */
-:root {
-  --primary-color: #2e7d32;   /* 深绿主色 */
-  --primary-light: #4caf50;  /* 浅绿 */
-  --accent-color: #00acc1;   /* 科技蓝辅助色 */
-  --bg-color: #f1f8e9;       /* 浅绿背景 */
-  --text-dark: #1b5e20;      /* 深绿文字 */
-  --text-light: #f1f8e9;     /* 浅色文字 */
-}
+/* ========== 智慧农业主题设计 ========== */
+/* Primary: #1a472a (深森林绿) Accent: #3a7d44 (森林绿)
+   Secondary: #0f766e (青色) Surface: #f0fdf4 (薄荷绿)
+   Text: #1e293b / #475569 / #64748b */
 
 /* 页面背景 */
 .register-page {
@@ -398,76 +393,104 @@ export default {
   display: flex;
   justify-content: center;
   align-items: center;
-  background: linear-gradient(135deg, var(--bg-color) 0%, #e8f5e9 100%);
+  background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 50%, #f0fdfa 100%);
   padding: 20px;
   box-sizing: border-box;
   position: relative;
   overflow: hidden;
 }
 
-/* 背景装饰（与登录页一致） */
+.register-page::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(ellipse at 30% 20%, rgba(58, 125, 68, 0.08) 0%, transparent 50%),
+              radial-gradient(ellipse at 70% 80%, rgba(15, 118, 110, 0.06) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+/* 背景装饰 */
 .bg-decoration {
   position: absolute;
   width: 100%;
   height: 100%;
-  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%2381c784' fill-opacity='0.1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%233a7d44' fill-opacity='0.06'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
   z-index: 0;
 }
 
 /* 注册容器 */
 .register-container {
   width: 420px;
-  background-color: #fff;
-  border-radius: 12px;
-  padding: 30px 40px;
-  box-shadow: 0 8px 24px rgba(46, 125, 50, 0.15);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  border-radius: 20px;
+  padding: 36px 44px;
+  box-shadow: 0 12px 40px rgba(26, 71, 42, 0.12);
+  border: 1px solid rgba(71, 85, 99, 0.1);
   transition: transform 0.3s ease, box-shadow 0.3s ease;
   position: relative;
   z-index: 1;
 }
 
-.register-container:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 12px 32px rgba(46, 125, 50, 0.2);
+.register-container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, #1a472a, #3a7d44, #22c55e);
+  border-radius: 20px 20px 0 0;
 }
 
-/* 平台标识（与登录页一致） */
+.register-container:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 20px 50px rgba(26, 71, 42, 0.18);
+}
+
+/* 平台标识 */
 .platform-logo {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 20px;
-  gap: 10px;
+  margin-bottom: 24px;
+  gap: 12px;
 }
 
 .icon-leaf {
-  font-size: 28px;
-  color: var(--primary-color);
+  font-size: 32px;
+  color: #3a7d44;
   animation: pulse 3s infinite;
+  filter: drop-shadow(0 2px 4px rgba(58, 125, 68, 0.3));
 }
 
 .platform-logo h1 {
   margin: 0;
-  color: var(--text-dark);
-  font-size: 20px;
-  font-weight: 600;
+  color: #1a472a;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 /* 注册标题区 */
 .register-header {
   text-align: center;
-  margin-bottom: 30px;
+  margin-bottom: 32px;
 }
 
 .register-header h2 {
   margin: 0 0 10px;
-  color: var(--text-dark);
-  font-size: 24px;
-  font-weight: 600;
+  color: #1a472a;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .subtitle {
-  color: #558b2f;
+  color: #64748b;
   margin: 0;
   font-size: 14px;
 }
@@ -488,25 +511,26 @@ export default {
   width: 100%;
 }
 
-/* 输入框样式（与登录页一致） */
+/* 输入框样式 */
 .form-input {
   width: 100%;
-  padding: 14px 14px 14px 48px;
-  border: 1px solid #c8e6c9;
-  border-radius: 8px;
+  padding: 16px 16px 16px 50px;
+  border: 1px solid rgba(71, 85, 99, 0.2);
+  border-radius: 12px;
   font-size: 15px;
   transition: all 0.3s ease;
   box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.8);
 }
 
 .form-input:focus {
   outline: none;
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px rgba(46, 125, 50, 0.1);
-  transform: scale(1.01);
+  border-color: #3a7d44;
+  box-shadow: 0 0 0 4px rgba(58, 125, 68, 0.1);
+  background: #fff;
 }
 
-/* 下拉选择框样式（角色选择） */
+/* 下拉选择框样式 */
 .select-wrapper {
   display: flex;
   align-items: center;
@@ -514,42 +538,42 @@ export default {
 
 .form-select {
   width: 100%;
-  padding: 14px 14px 14px 48px;
-  border: 1px solid #c8e6c9;
-  border-radius: 8px;
+  padding: 16px 16px 16px 50px;
+  border: 1px solid rgba(71, 85, 99, 0.2);
+  border-radius: 12px;
   font-size: 15px;
-  background-color: #fff;
-  appearance: none; /* 清除默认下拉样式 */
+  background: rgba(255, 255, 255, 0.8);
+  appearance: none;
   transition: all 0.3s ease;
   box-sizing: border-box;
   cursor: pointer;
 }
 
-/* 下拉框箭头（自定义） */
+/* 下拉框箭头 */
 .select-wrapper::after {
   content: "▼";
   position: absolute;
-  right: 16px;
+  right: 18px;
   top: 50%;
   transform: translateY(-50%);
-  color: #66bb6a;
+  color: #64748b;
   font-size: 12px;
-  pointer-events: none; /* 不影响下拉框点击 */
+  pointer-events: none;
 }
 
 .form-select:focus {
   outline: none;
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px rgba(46, 125, 50, 0.1);
+  border-color: #3a7d44;
+  box-shadow: 0 0 0 4px rgba(58, 125, 68, 0.1);
 }
 
 /* 图标样式 */
 .icon {
   position: absolute;
-  left: 16px;
+  left: 18px;
   top: 50%;
   transform: translateY(-50%);
-  color: var(--primary-color);
+  color: #3a7d44;
   font-size: 18px;
 }
 
@@ -561,13 +585,10 @@ export default {
   content: "🔒";
 }
 .icon-role::before {
-  content: "👨‍💼"; /* 角色图标 */
+  content: "👨‍💼";
 }
 .icon-captcha::before {
-  content: "🌾"; /* 农业主题验证码图标 */
-}
-.icon-eye {
-  font-size: 16px;
+  content: "🌾";
 }
 .eye-icon {
   font-size: 18px;
@@ -577,15 +598,15 @@ export default {
 /* 浮动标签样式 */
 .floating-label {
   position: absolute;
-  left: 46px;
+  left: 48px;
   top: 50%;
   transform: translateY(-50%);
-  color: #9e9e9e;
+  color: #94a3b8;
   font-size: 14px;
   pointer-events: none;
   transition: all 0.2s ease;
   background: transparent;
-  padding: 0 4px;
+  padding: 0 6px;
 }
 
 /* 输入框有内容或聚焦时，标签缩小上移 */
@@ -593,26 +614,26 @@ export default {
 .form-input:not(:placeholder-shown) + .floating-label {
   top: 0;
   font-size: 12px;
-  color: var(--primary-color);
+  color: #3a7d44;
   background: white;
 }
 
-/* 密码切换按钮（与登录页一致） */
+/* 密码切换按钮 */
 .toggle-btn {
   position: absolute;
-  right: 12px;
+  right: 14px;
   top: 50%;
   transform: translateY(-50%);
   background: transparent;
   border: none;
   cursor: pointer;
-  color: #66bb6a;
+  color: #64748b;
   padding: 4px;
   transition: color 0.2s ease;
 }
 
 .toggle-btn:hover {
-  color: var(--primary-color);
+  color: #3a7d44;
 }
 
 /* 验证码区域样式 */
@@ -623,84 +644,43 @@ export default {
 
 .captcha-img {
   width: 120px;
-  height: 40px;
-  margin-left: 10px;
+  height: 42px;
+  margin-left: 12px;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: 8px;
   transition: transform 0.2s ease;
   object-fit: contain;
+  border: 1px solid rgba(71, 85, 99, 0.1);
 }
 
 .captcha-img:hover {
   transform: scale(1.05);
 }
 
-/* 注册按钮 */
-.register-btn {
-  width: 100%;
-  padding: 14px;
-  background-color: var(--primary-color);
-  color: var(--text-light);
-  border: none;
-  border-radius: 8px;
-  font-size: 16px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-
-.register-btn:hover:not(:disabled) {
-  background-color: var(--primary-light);
-  box-shadow: 0 4px 12px rgba(46, 125, 50, 0.3);
-}
-
-.register-btn:active:not(:disabled) {
-  transform: scale(0.98);
-}
-
-.register-btn:disabled {
-  background-color: #a5d6a7;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-
-/* 加载动画（与登录页一致） */
-.spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-radius: 50%;
-  border-top-color: white;
-  animation: spin 1s ease-in-out infinite;
-}
-
-/* 表单底部（跳转登录链接） */
+/* 表单底部 */
 .form-footer {
   text-align: center;
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 .login-link {
-  color: var(--primary-color);
+  color: #3a7d44;
   text-decoration: none;
   font-size: 14px;
+  font-weight: 500;
   transition: all 0.2s ease;
 }
 
 .login-link:hover {
   text-decoration: underline;
-  color: var(--primary-light);
+  color: #1a472a;
 }
 
-/* 提示信息（支持错误/成功两种样式） */
+/* 提示信息 */
 .message {
-  margin-top: 15px;
-  padding: 10px 15px;
-  border-radius: 6px;
+  margin-top: 18px;
+  padding: 12px 16px;
+  border-radius: 10px;
   font-size: 14px;
   text-align: center;
   transition: all 0.3s ease;
@@ -709,22 +689,19 @@ export default {
 
 /* 错误提示 */
 .error {
-  background-color: #ffebee;
-  color: #c62828;
-  border: 1px solid #ef9a9a;
+  background: linear-gradient(135deg, rgba(254, 226, 226, 0.9), rgba(254, 202, 202, 0.9));
+  color: #b91c1c;
+  border: 1px solid rgba(239, 68, 68, 0.2);
 }
 
 /* 成功提示 */
 .success {
-  background-color: #e8f5e9;
-  color: #2e7d32;
-  border: 1px solid #a5d6a7;
+  background: linear-gradient(135deg, rgba(220, 252, 231, 0.9), rgba(187, 247, 208, 0.9));
+  color: #166534;
+  border: 1px solid rgba(34, 197, 94, 0.2);
 }
 
-/* 动画定义（与登录页一致） */
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
+/* 动画定义 */
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -739,11 +716,12 @@ export default {
 @media (max-width: 450px) {
   .register-container {
     width: 100%;
-    padding: 25px 20px;
+    padding: 28px 24px;
+    border-radius: 16px;
   }
-  
+
   .form-input, .form-select {
-    padding: 12px 12px 12px 42px;
+    padding: 14px 14px 14px 44px;
     font-size: 14px;
   }
 }

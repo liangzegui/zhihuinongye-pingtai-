@@ -1,8 +1,13 @@
 package com.example.agribackend.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.example.agribackend.entity.ExceptionConfigEntity;
+import com.example.agribackend.mapper.ExceptionConfigMapper;
 import com.example.agribackend.service.Esp32BridgeService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.http.ResponseEntity;
@@ -15,6 +20,7 @@ import org.slf4j.LoggerFactory;
 
 import java.net.URI;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -22,19 +28,46 @@ import java.util.Map;
 @Service
 public class Esp32BridgeServiceImpl implements Esp32BridgeService {
     private static final Logger logger = LoggerFactory.getLogger(Esp32BridgeServiceImpl.class);
+    private static final String CONFIG_KEY = "esp32_base_url";
+    private static final String CONFIG_GROUP = "system";
 
-    @Value("${esp32.base-url:http://192.168.2.92}")
+    @Value("${esp32.base-url:http://192.168.2.4}")
     private String baseUrl;
+
+    @Autowired
+    private ExceptionConfigMapper configMapper;
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
     public Esp32BridgeServiceImpl(RestTemplateBuilder builder, ObjectMapper objectMapper) {
         this.restTemplate = builder
-                .setConnectTimeout(Duration.ofSeconds(3))
-                .setReadTimeout(Duration.ofSeconds(5))
+                .connectTimeout(Duration.ofSeconds(3))
+                .readTimeout(Duration.ofSeconds(5))
                 .build();
         this.objectMapper = objectMapper;
+    }
+
+    /**
+     * 启动时从数据库加载ESP32地址，如果数据库没有则用配置文件的默认值
+     */
+    @PostConstruct
+    public void init() {
+        try {
+            ExceptionConfigEntity config = configMapper.selectOne(
+                    new LambdaQueryWrapper<ExceptionConfigEntity>()
+                            .eq(ExceptionConfigEntity::getConfigKey, CONFIG_KEY));
+            if (config != null && config.getConfigValue() != null && !config.getConfigValue().isEmpty()) {
+                this.baseUrl = config.getConfigValue();
+                logger.info("[ESP32] 从数据库加载地址: {}", this.baseUrl);
+            } else {
+                // 数据库没有记录，将默认值存入数据库
+                saveToDb(this.baseUrl);
+                logger.info("[ESP32] 使用默认地址并存入数据库: {}", this.baseUrl);
+            }
+        } catch (Exception e) {
+            logger.warn("[ESP32] 从数据库加载地址失败，使用默认值: {}", this.baseUrl, e);
+        }
     }
 
     /**
@@ -45,11 +78,36 @@ public class Esp32BridgeServiceImpl implements Esp32BridgeService {
     }
 
     /**
-     * 动态设置ESP32地址
+     * 动态设置ESP32地址，同时持久化到数据库
      */
     public void setBaseUrl(String newBaseUrl) {
         this.baseUrl = newBaseUrl;
-        logger.info("[ESP32] 地址已更新为: {}", newBaseUrl);
+        saveToDb(newBaseUrl);
+        logger.info("[ESP32] 地址已更新并持久化: {}", newBaseUrl);
+    }
+
+    /**
+     * 将ESP32地址保存到数据库
+     */
+    private void saveToDb(String url) {
+        try {
+            ExceptionConfigEntity config = configMapper.selectOne(
+                    new LambdaQueryWrapper<ExceptionConfigEntity>()
+                            .eq(ExceptionConfigEntity::getConfigKey, CONFIG_KEY));
+            if (config != null) {
+                config.setConfigValue(url);
+                configMapper.updateById(config);
+            } else {
+                config = new ExceptionConfigEntity();
+                config.setConfigKey(CONFIG_KEY);
+                config.setConfigValue(url);
+                config.setConfigGroup(CONFIG_GROUP);
+                config.setDescription("ESP32单片机本地HTTP网关地址");
+                configMapper.insert(config);
+            }
+        } catch (Exception e) {
+            logger.error("[ESP32] 地址持久化到数据库失败", e);
+        }
     }
 
     /**

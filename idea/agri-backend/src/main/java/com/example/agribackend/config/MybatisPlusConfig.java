@@ -22,8 +22,8 @@ public class MybatisPlusConfig {
         MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
         // 添加分页插件，指定数据库类型为 MySQL
         PaginationInnerInterceptor paginationInterceptor = new PaginationInnerInterceptor(DbType.MYSQL);
-        // 设置最大单页限制数量，-1 表示不限制
-        paginationInterceptor.setMaxLimit(500L);
+        // 设置最大单页限制数量，需要覆盖图表一次性拉取的上限
+        paginationInterceptor.setMaxLimit(5000L);
         interceptor.addInnerInterceptor(paginationInterceptor);
         return interceptor;
     }

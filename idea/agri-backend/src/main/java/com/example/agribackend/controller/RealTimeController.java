@@ -34,7 +34,7 @@ public class RealTimeController {
             if (data != null && !data.isEmpty()) {
                 EnvDataDTO dto = mapToDto(data);
                 dto.setDataSource("device"); // 标记数据来源为设备
-                dto.setIsRealTime(true);     // 标记为实时数据
+                dto.setIsRealTime(true); // 标记为实时数据
                 logger.debug("成功获取ESP32数据: {}", dto);
                 return Result.success(Collections.singletonList(dto));
             }
@@ -75,7 +75,7 @@ public class RealTimeController {
                     soilAdcValue = 4095.0;
 
                 // 返回原始ADC值
-                dto.setSoilAdc(soilAdcValue);
+                dto.setSoilAdc(soilAdcValue.intValue());
                 // 同时计算百分比湿度作为参考
                 double soilMoisture = Math.max(0, Math.min(100, (4095 - soilAdcValue) / 40.95));
                 dto.setSoilMoisture(soilMoisture);

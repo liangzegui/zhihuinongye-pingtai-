@@ -49,9 +49,6 @@
                   </el-tag>
                 </div>
                 <div class="gauge-chart" ref="tempGauge"></div>
-                <div class="gauge-value">
-                  {{ currentData.temperature || 0 }} °C
-                </div>
               </el-card>
             </el-col>
             <el-col :xs="24" :sm="12">
@@ -66,7 +63,6 @@
                   </el-tag>
                 </div>
                 <div class="gauge-chart" ref="humiGauge"></div>
-                <div class="gauge-value">{{ currentData.humidity || 0 }} %</div>
               </el-card>
             </el-col>
           </el-row>
@@ -81,12 +77,9 @@
                   <div class="card-value" :class="{ 'is-abnormal': isAbnormal('soilAdc', currentData.soilAdc) }">
                     {{ currentData.soilAdc || 0 }} <span class="unit">ADC</span>
                   </div>
-                  <el-progress 
-                    :percentage="Math.min(100, (currentData.soilAdc || 0) / 40.95)" 
-                    :color="getSoilColor(currentData.soilAdc)"
-                    :show-text="false"
-                  />
-                  <!-- 数据统计 -->
+                  <el-tag :type="getSoilStatus(currentData.soilAdc).type" size="small">
+                    {{ getSoilStatus(currentData.soilAdc).text }}
+                  </el-tag>
                   <div class="data-stats">
                     <div class="stat-item">
                       <span class="stat-label">范围</span>
@@ -108,10 +101,9 @@
                   <div class="card-value" :class="{ 'is-abnormal': isAbnormal('lightIntensity', currentData.lightIntensity) }">
                     {{ currentData.lightIntensity || 0 }} <span class="unit">lux</span>
                   </div>
-                  <div class="light-bar">
-                    <div class="light-fill" :style="{ width: getLightPercentage(currentData.lightIntensity) + '%' }"></div>
-                  </div>
-                  <!-- 数据统计 -->
+                  <el-tag :type="getLightStatus(currentData.lightIntensity).type" size="small">
+                    {{ getLightStatus(currentData.lightIntensity).text }}
+                  </el-tag>
                   <div class="data-stats">
                     <div class="stat-item">
                       <span class="stat-label">范围</span>
@@ -136,7 +128,6 @@
                   <el-tag :type="getCO2Status(currentData.co2).type" size="small">
                     {{ getCO2Status(currentData.co2).text }}
                   </el-tag>
-                  <!-- 数据统计 -->
                   <div class="data-stats">
                     <div class="stat-item">
                       <span class="stat-label">范围</span>
@@ -160,7 +151,7 @@
             </div>
           </el-card>
 
-          <!-- 实时数据趋势图 - 拆分为两个图表 -->
+          <!-- 实时数据趋势图 -->
           <el-row :gutter="15" style="margin-top: 15px;">
             <el-col :xs="24" :sm="12">
               <el-card class="trend-card" shadow="hover">
@@ -197,7 +188,7 @@
       <!-- 右侧：设备状态和控制 -->
       <el-col :xs="24" :sm="24" :md="10" :lg="8">
         <DeviceStatus @status-updated="handleStatusUpdate" />
-        <DeviceControl 
+        <DeviceControl
           :external-status="latestDeviceStatus"
           @mode-changed="handleModeChange"
           @device-changed="handleDeviceChange"
@@ -241,6 +232,8 @@ import { getRealTimeData } from '@/api/data'
 import DeviceStatus from '@/components/DeviceStatus.vue'
 import DeviceControl from '@/components/DeviceControl.vue'
 import websocket from '@/utils/websocket'
+import wheatIcon from '@/assets/wheat.svg'
+import leafyIcon from '@/assets/leafy.svg'
 
 export default {
   name: 'RealTime',
@@ -270,10 +263,7 @@ export default {
       lastUpdateTime: '--',
       refreshTimer: null,
       countdownTimer: null,
-      tempChart: null,
-      humiChart: null,
-      tempTrendChart: null,   // 温度趋势图
-      humiTrendChart: null,   // 湿度趋势图
+      // 注意：图表实例不放在 data() 中，避免被 Vue 3 Proxy 代理导致 ECharts 内部崩溃
       isUnmounted: false,
       wsConnected: false,
       useWebSocket: false,  // 默认走HTTP轮询对接ESP32
@@ -294,6 +284,13 @@ export default {
       showUpdateIndicator: false,  // 是否显示更新提示（仅手动刷新时）
       maxHistory: 10          // 最多保留条数
     }
+  },
+  created() {
+    // ECharts 实例必须作为非响应式属性
+    this.tempChart = null
+    this.humiChart = null
+    this.tempTrendChart = null
+    this.humiTrendChart = null
   },
   mounted() {
     this.fetchRealTimeData()
@@ -466,7 +463,10 @@ export default {
       this.tempTrendChart.setOption({
         tooltip: {
           trigger: 'axis',
-          formatter: '{b}: {c}°C'
+          formatter: '{b}: {c}°C',
+          backgroundColor: 'rgba(255,255,255,0.95)',
+          borderColor: '#e2e8f0',
+          textStyle: { color: '#1e293b', fontSize: 12 }
         },
         grid: {
           left: '3%',
@@ -479,27 +479,31 @@ export default {
           type: 'category',
           boundaryGap: false,
           data: times,
-          axisLabel: { fontSize: 10 }
+          axisLabel: { fontSize: 10, color: '#94a3b8' },
+          axisLine: { lineStyle: { color: '#e2e8f0' } }
         },
         yAxis: {
           type: 'value',
           name: '°C',
-          axisLabel: { fontSize: 10 },
-          nameTextStyle: { fontSize: 10 }
+          axisLabel: { fontSize: 10, color: '#94a3b8' },
+          nameTextStyle: { fontSize: 10, color: '#94a3b8' },
+          splitLine: { lineStyle: { color: '#f1f5f9' } }
         },
         series: [{
           name: '温度',
           type: 'line',
           smooth: true,
           data: temps,
-          itemStyle: { color: '#f56c6c' },
-          areaStyle: { 
+          symbol: 'circle',
+          symbolSize: 6,
+          itemStyle: { color: '#dc2626' },
+          areaStyle: {
             color: {
               type: 'linear',
               x: 0, y: 0, x2: 0, y2: 1,
               colorStops: [
-                { offset: 0, color: 'rgba(245,108,108,0.3)' },
-                { offset: 1, color: 'rgba(245,108,108,0.05)' }
+                { offset: 0, color: 'rgba(220,38,38,0.2)' },
+                { offset: 1, color: 'rgba(220,38,38,0.02)' }
               ]
             }
           },
@@ -511,7 +515,10 @@ export default {
       this.humiTrendChart.setOption({
         tooltip: {
           trigger: 'axis',
-          formatter: '{b}: {c}%'
+          formatter: '{b}: {c}%',
+          backgroundColor: 'rgba(255,255,255,0.95)',
+          borderColor: '#e2e8f0',
+          textStyle: { color: '#1e293b', fontSize: 12 }
         },
         grid: {
           left: '3%',
@@ -524,27 +531,31 @@ export default {
           type: 'category',
           boundaryGap: false,
           data: times,
-          axisLabel: { fontSize: 10 }
+          axisLabel: { fontSize: 10, color: '#94a3b8' },
+          axisLine: { lineStyle: { color: '#e2e8f0' } }
         },
         yAxis: {
           type: 'value',
           name: '%',
-          axisLabel: { fontSize: 10 },
-          nameTextStyle: { fontSize: 10 }
+          axisLabel: { fontSize: 10, color: '#94a3b8' },
+          nameTextStyle: { fontSize: 10, color: '#94a3b8' },
+          splitLine: { lineStyle: { color: '#f1f5f9' } }
         },
         series: [{
           name: '湿度',
           type: 'line',
           smooth: true,
           data: humis,
-          itemStyle: { color: '#409eff' },
-          areaStyle: { 
+          symbol: 'circle',
+          symbolSize: 6,
+          itemStyle: { color: '#2563eb' },
+          areaStyle: {
             color: {
               type: 'linear',
               x: 0, y: 0, x2: 0, y2: 1,
               colorStops: [
-                { offset: 0, color: 'rgba(64,158,255,0.3)' },
-                { offset: 1, color: 'rgba(64,158,255,0.05)' }
+                { offset: 0, color: 'rgba(37,99,235,0.2)' },
+                { offset: 1, color: 'rgba(37,99,235,0.02)' }
               ]
             }
           },
@@ -755,7 +766,7 @@ export default {
       if (this.isUnmounted) return
       const el = this.$refs.tempGauge
       if (!el) return
-      
+
       if (!this.tempChart) {
         try {
           this.tempChart = echarts.init(el)
@@ -765,55 +776,103 @@ export default {
         }
       }
 
+      const value = this.currentData.temperature || 0
+
       const option = {
+        graphic: [{
+          type: 'image',
+          style: {
+            image: wheatIcon,
+            width: 36,
+            height: 36,
+            opacity: 0.85
+          },
+          left: 'center',
+          top: '38%'
+        }],
         series: [{
           type: 'gauge',
           min: 0,
           max: 50,
-          splitNumber: 5,
+          startAngle: 225,
+          endAngle: -45,
+          radius: '90%',
+          center: ['50%', '55%'],
+          progress: {
+            show: true,
+            width: 14,
+            roundCap: true,
+            itemStyle: {
+              color: {
+                type: 'linear',
+                x: 0, y: 0, x2: 1, y2: 0,
+                colorStops: [
+                  { offset: 0, color: '#0ea5e9' },
+                  { offset: 0.4, color: '#22c55e' },
+                  { offset: 0.7, color: '#eab308' },
+                  { offset: 1, color: '#ef4444' }
+                ]
+              },
+              shadowColor: 'rgba(234, 179, 8, 0.4)',
+              shadowBlur: 10,
+              shadowOffsetX: 0,
+              shadowOffsetY: 0
+            }
+          },
           axisLine: {
             lineStyle: {
-              width: 15,
-              color: [
-                [0.3, '#67c23a'],
-                [0.7, '#e6a23c'],
-                [1, '#f56c6c']
-              ]
-            }
+              width: 14,
+              color: [[1, 'rgba(71, 85, 99, 0.15)']]
+            },
+            roundCap: true
           },
+          axisTick: { show: false },
+          splitLine: { show: false },
+          axisLabel: { show: false },
           pointer: {
+            icon: 'path://M12.8,0.7l12,40.1H0.7L12.8,0.7z',
+            length: '55%',
+            width: 10,
+            offsetCenter: [0, '-10%'],
             itemStyle: {
-              color: 'auto'
+              color: {
+                type: 'linear',
+                x: 0, y: 0, x2: 0, y2: 1,
+                colorStops: [
+                  { offset: 0, color: '#dc2626' },
+                  { offset: 1, color: '#f97316' }
+                ]
+              },
+              shadowColor: 'rgba(249, 115, 22, 0.6)',
+              shadowBlur: 8,
+              shadowOffsetY: 2
             }
           },
-          axisTick: {
-            distance: -15,
-            length: 5,
-            lineStyle: {
-              color: '#fff',
-              width: 1
+          anchor: {
+            show: true,
+            showAbove: true,
+            size: 16,
+            itemStyle: {
+              color: '#ea580c',
+              shadowColor: 'rgba(234, 88, 12, 0.4)',
+              shadowBlur: 6
             }
           },
-          splitLine: {
-            distance: -20,
-            length: 15,
-            lineStyle: {
-              color: '#fff',
-              width: 2
-            }
-          },
-          axisLabel: {
-            color: 'auto',
-            distance: 20,
-            fontSize: 10
-          },
+          title: { show: false },
           detail: {
-            show: false
+            valueAnimation: true,
+            fontSize: 26,
+            fontWeight: '700',
+            fontFamily: 'Inter, system-ui, sans-serif',
+            color: '#1e293b',
+            offsetCenter: [0, '85%'],
+            formatter: function(val) {
+              return val.toFixed(1) + '°C'
+            }
           },
-          data: [{
-            value: this.currentData?.temperature || 0
-          }],
-          animationDuration: 500
+          data: [{ value: value }],
+          animationDuration: 800,
+          animationEasing: 'cubicOut'
         }]
       }
 
@@ -824,7 +883,7 @@ export default {
       if (this.isUnmounted) return
       const el = this.$refs.humiGauge
       if (!el) return
-      
+
       if (!this.humiChart) {
         try {
           this.humiChart = echarts.init(el)
@@ -834,55 +893,102 @@ export default {
         }
       }
 
+      const value = this.currentData.humidity || 0
+
       const option = {
+        graphic: [{
+          type: 'image',
+          style: {
+            image: leafyIcon,
+            width: 36,
+            height: 36,
+            opacity: 0.85
+          },
+          left: 'center',
+          top: '38%'
+        }],
         series: [{
           type: 'gauge',
           min: 0,
           max: 100,
-          splitNumber: 5,
+          startAngle: 225,
+          endAngle: -45,
+          radius: '90%',
+          center: ['50%', '55%'],
+          progress: {
+            show: true,
+            width: 14,
+            roundCap: true,
+            itemStyle: {
+              color: {
+                type: 'linear',
+                x: 0, y: 0, x2: 1, y2: 0,
+                colorStops: [
+                  { offset: 0, color: '#0f766e' },
+                  { offset: 0.5, color: '#14b8a6' },
+                  { offset: 1, color: '#5eead4' }
+                ]
+              },
+              shadowColor: 'rgba(20, 184, 166, 0.5)',
+              shadowBlur: 10,
+              shadowOffsetX: 0,
+              shadowOffsetY: 0
+            }
+          },
           axisLine: {
             lineStyle: {
-              width: 15,
-              color: [
-                [0.4, '#f56c6c'],
-                [0.8, '#67c23a'],
-                [1, '#409eff']
-              ]
-            }
+              width: 14,
+              color: [[1, 'rgba(71, 85, 99, 0.15)']]
+            },
+            roundCap: true
           },
+          axisTick: { show: false },
+          splitLine: { show: false },
+          axisLabel: { show: false },
           pointer: {
+            icon: 'path://M12.8,0.7l12,40.1H0.7L12.8,0.7z',
+            length: '55%',
+            width: 10,
+            offsetCenter: [0, '-10%'],
             itemStyle: {
-              color: 'auto'
+              color: {
+                type: 'linear',
+                x: 0, y: 0, x2: 0, y2: 1,
+                colorStops: [
+                  { offset: 0, color: '#0f766e' },
+                  { offset: 1, color: '#14b8a6' }
+                ]
+              },
+              shadowColor: 'rgba(15, 118, 110, 0.6)',
+              shadowBlur: 8,
+              shadowOffsetY: 2
             }
           },
-          axisTick: {
-            distance: -15,
-            length: 5,
-            lineStyle: {
-              color: '#fff',
-              width: 1
+          anchor: {
+            show: true,
+            showAbove: true,
+            size: 16,
+            itemStyle: {
+              color: '#0f766e',
+              shadowColor: 'rgba(15, 118, 110, 0.4)',
+              shadowBlur: 6
             }
           },
-          splitLine: {
-            distance: -20,
-            length: 15,
-            lineStyle: {
-              color: '#fff',
-              width: 2
-            }
-          },
-          axisLabel: {
-            color: 'auto',
-            distance: 20,
-            fontSize: 10
-          },
+          title: { show: false },
           detail: {
-            show: false
+            valueAnimation: true,
+            fontSize: 26,
+            fontWeight: '700',
+            fontFamily: 'Inter, system-ui, sans-serif',
+            color: '#1e293b',
+            offsetCenter: [0, '85%'],
+            formatter: function(val) {
+              return val.toFixed(1) + '%'
+            }
           },
-          data: [{
-            value: this.currentData?.humidity || 0
-          }],
-          animationDuration: 500
+          data: [{ value: value }],
+          animationDuration: 800,
+          animationEasing: 'cubicOut'
         }]
       }
 
@@ -902,18 +1008,20 @@ export default {
       return { type: 'info', text: '偏高' }
     },
 
-    getSoilColor(value) {
-      // ADC值范围：0-4095
-      // 土壤湿润（ADC < 1500）：绿色
-      // 正常（1500-3000）：黄色
-      // 干旱（> 3000）：红色
-      if (value < 1500) return '#67c23a'
-      if (value < 3000) return '#e6a23c'
-      return '#f56c6c'
+    getSoilStatus(value) {
+      // ADC值越大越干燥
+      if (value < 2200) return { type: 'primary', text: '湿润' }
+      if (value < 2800) return { type: 'success', text: '正常' }
+      if (value < 3200) return { type: 'warning', text: '轻旱' }
+      if (value < 3500) return { type: 'warning', text: '中旱' }
+      return { type: 'danger', text: '重旱' }
     },
 
-    getLightPercentage(value) {
-      return Math.min((value / 1000) * 100, 100)
+    getLightStatus(value) {
+      if (value < 800) return { type: 'info', text: '偏暗' }
+      if (value < 1000) return { type: 'warning', text: '较暗' }
+      if (value < 3000) return { type: 'success', text: '正常' }
+      return { type: 'primary', text: '明亮' }
     },
 
     getCO2Status(co2) {
@@ -1003,134 +1111,118 @@ export default {
 
 
 <style scoped>
+/* ========== Design Tokens ========== */
+/* Primary: #1a472a (deep forest)  Accent: #3a7d44 (forest green)
+   Secondary: #0f766e (teal)       Surface: #f0fdf4 (mint)
+   Neutral: #475569 (slate)        Border: rgba(71, 85, 99, 0.12)
+   Text: #1e293b / #475569 / #94a3b8 */
+
 .realtime-page {
-  padding: 20px;
-  background: #f5f7fa;
+  padding: 24px;
   min-height: calc(100vh - 60px);
+  background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 50%, #f0fdfa 100%);
+  position: relative;
 }
 
-/* 数据更新指示条 */
+.realtime-page::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 40%;
+  height: 40%;
+  background: radial-gradient(ellipse at top right, rgba(58, 125, 68, 0.08) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+/* ========== Update Indicator ========== */
 .update-indicator {
-  padding: 10px 15px;
-  background: linear-gradient(90deg, #d4edda 0%, #c3e6cb 100%);
-  border-left: 4px solid #28a745;
-  border-radius: 6px;
-  margin-bottom: 15px;
+  padding: 12px 18px;
+  background: linear-gradient(135deg, rgba(240, 253, 244, 0.95), rgba(220, 252, 231, 0.95));
+  border: 1px solid rgba(58, 125, 68, 0.2);
+  border-radius: 12px;
+  margin-bottom: 16px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: #155724;
-  font-size: 14px;
+  gap: 10px;
+  color: #166534;
+  font-size: 13px;
   font-weight: 500;
   animation: slideDown 0.3s ease-out;
+  box-shadow: 0 4px 12px rgba(26, 71, 42, 0.08);
 }
 
 .update-icon {
-  color: #28a745;
-  font-size: 18px;
+  color: #16a34a;
+  font-size: 16px;
 }
 
 .update-indicator.pulse .update-icon {
-  animation: pulse-update 2s infinite;
+  animation: pulse-fade 2s infinite;
 }
 
 @keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes pulse-update {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.6;
-  }
+@keyframes pulse-fade {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
+/* ========== Page Header ========== */
 .page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
-  padding: 20px;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  padding: 18px 24px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+  border-radius: 14px;
+  border: 1px solid rgba(71, 85, 99, 0.1);
+  box-shadow: 0 4px 20px rgba(26, 71, 42, 0.06);
+  position: relative;
+  z-index: 10;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 15px;
+  gap: 16px;
 }
 
 .page-header h2 {
   margin: 0;
-  font-size: 24px;
-  color: #303133;
+  font-size: 18px;
+  font-weight: 700;
+  color: #1a472a;
+  letter-spacing: -0.02em;
 }
 
 .connection-status {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 6px 12px;
-  background: #f5f7fa;
-  border-radius: 6px;
-  font-size: 14px;
+  background: linear-gradient(135deg, rgba(240, 253, 244, 0.8), rgba(236, 253, 245, 0.8));
+  border-radius: 20px;
+  font-size: 12px;
+  border: 1px solid rgba(58, 125, 68, 0.15);
 }
 
 .status-icon {
-  font-size: 16px;
-  transition: all 0.3s ease;
+  font-size: 14px;
+  transition: color 0.3s;
 }
 
-.status-icon.connected {
-  color: #67c23a;
-  animation: pulse-green 2s infinite;
-}
+.status-icon.connected { color: #16a34a; }
+.status-icon.disconnected { color: #dc2626; }
 
-.status-icon.disconnected {
-  color: #f56c6c;
-  animation: pulse-red 2s infinite;
-}
-
-.status-text {
-  font-weight: 500;
-}
-
-.status-text.connected {
-  color: #67c23a;
-}
-
-.status-text.disconnected {
-  color: #f56c6c;
-}
-
-@keyframes pulse-green {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.6;
-  }
-}
-
-@keyframes pulse-red {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.6;
-  }
-}
+.status-text { font-weight: 500; font-size: 12px; }
+.status-text.connected { color: #16a34a; }
+.status-text.disconnected { color: #dc2626; }
 
 .header-info {
   display: flex;
@@ -1140,237 +1232,268 @@ export default {
 .header-actions {
   display: flex;
   align-items: center;
-  margin-left: 15px;
 }
 
-.update-time {
-  font-size: 13px;
-  color: #909399;
-  padding: 6px 12px;
-  background: #f5f7fa;
-  border-radius: 6px;
-  white-space: nowrap;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 200px;
-  font-variant-numeric: tabular-nums;
-}
-
-/* 当数据更新时的脉冲效果 */
-.update-time:hover {
-  background: #e6f7ff;
-  color: #0050b3;
-}
-
-.auto-refresh {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 14px;
-  color: #606266;
-}
-
+/* ========== Dashboard ========== */
 .dashboard-container {
   width: 100%;
 }
 
+/* ========== Gauge Cards ========== */
 .gauge-card {
   height: 280px;
-  margin-bottom: 15px;
-  border-radius: 12px;
+  margin-bottom: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(71, 85, 99, 0.12);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+.gauge-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(58, 125, 68, 0.05),
+    transparent
+  );
+  animation: shimmer 3s infinite;
+}
+
+@keyframes shimmer {
+  0% { left: -100%; }
+  100% { left: 100%; }
+}
+
+.gauge-card :deep(.el-card__body) {
+  padding: 16px 16px 8px;
+  position: relative;
+  z-index: 1;
 }
 
 .gauge-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(71, 85, 99, 0.08);
 }
 
 .gauge-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
-  color: #303133;
+  color: #1a472a;
   display: flex;
   align-items: center;
   gap: 8px;
+  letter-spacing: -0.01em;
 }
 
 .title-icon {
-  width: 24px;
-  height: 36px;
+  width: 22px;
+  height: 30px;
   object-fit: contain;
+  filter: drop-shadow(0 2px 4px rgba(26, 71, 42, 0.15));
 }
 
 .gauge-chart {
   width: 100%;
-  height: 160px;
+  height: 210px;
+  position: relative;
 }
 
-.gauge-value {
-  text-align: center;
-  font-size: 24px;
-  font-weight: bold;
-  color: #409eff;
-  margin-top: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
+.gauge-chart::after {
+  content: '';
+  position: absolute;
+  bottom: 10%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60%;
+  height: 4px;
+  background: linear-gradient(90deg, transparent, rgba(58, 125, 68, 0.1), transparent);
+  border-radius: 2px;
 }
 
-.temp-icon {
-  font-size: 28px;
-  color: #f56c6c;
-}
-
-.thermometer-icon {
-  width: 32px;
-  height: 48px;
-  object-fit: contain;
-}
-
+/* ========== Data Cards (Soil / Light / CO2) ========== */
 .data-card {
-  min-height: 170px;
-  height: auto;
-  border-radius: 12px;
-  margin-bottom: 15px;
-  transition: all 0.3s;
+  min-height: 140px;
+  border-radius: 14px;
+  margin-bottom: 16px;
+  border: 1px solid rgba(71, 85, 99, 0.1);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.data-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--card-accent, #3a7d44), transparent);
+  opacity: 0;
+  transition: opacity 0.3s;
 }
 
 .data-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-4px);
+  box-shadow: 0 12px 32px rgba(26, 71, 42, 0.12);
+}
+
+.data-card:hover::before {
+  opacity: 1;
 }
 
 .soil-card {
-  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-  border-left: 4px solid #67c23a;
+  --card-accent: #3a7d44;
+  border-left: 4px solid #3a7d44;
 }
 
 .light-card {
-  background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
-  border-left: 4px solid #e6a23c;
+  --card-accent: #d97706;
+  border-left: 4px solid #d97706;
 }
 
 .co2-card {
-  background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
-  border-left: 4px solid #909399;
-}
-
-.card-icon {
-  font-size: 48px;
-  width: 70px;
-  text-align: center;
+  --card-accent: #0f766e;
+  border-left: 4px solid #0f766e;
 }
 
 .card-icon-img {
-  width: 48px;
-  height: 48px;
+  width: 36px;
+  height: 36px;
   object-fit: contain;
   flex-shrink: 0;
+  opacity: 0.85;
+  align-self: center;
 }
 
 .card-content {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .card-label {
-  font-size: 14px;
-  color: #606266;
-  margin-bottom: 8px;
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 4px;
 }
 
 .card-value {
-  font-size: 28px;
-  font-weight: bold;
-  color: #303133;
-  margin-bottom: 8px;
+  font-size: 22px;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 6px;
+  line-height: 1.2;
   transition: color 0.3s ease;
 }
 
-/* 异常数据标记 */
 .card-value.is-abnormal {
-  color: #f56c6c;
-  animation: abnormal-pulse 1s infinite;
+  color: #dc2626;
+  animation: abnormal-pulse 1.5s infinite;
 }
 
 @keyframes abnormal-pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.7;
-  }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.65; }
 }
 
-/* 数据统计显示 */
+.unit {
+  font-size: 13px;
+  color: #94a3b8;
+  font-weight: 400;
+}
+
+/* ========== Data Stats ========== */
 .data-stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(0, 0, 0, 0.05);
-  font-size: 12px;
+  gap: 2px 4px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #f1f5f9;
 }
 
 .stat-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .stat-label {
-  color: #909399;
+  color: #94a3b8;
   font-weight: 500;
+  font-size: 10px;
 }
 
 .stat-value {
-  color: #606266;
-  font-weight: bold;
-}
-
-.unit {
-  font-size: 16px;
-  color: #909399;
-  font-weight: normal;
-}
-
-.light-bar {
-  width: 100%;
-  height: 8px;
-  background: #e4e7ed;
-  border-radius: 4px;
+  color: #475569;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  max-width: 70px;
   overflow: hidden;
-  margin-top: 5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.light-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #e6a23c 0%, #f59e0b 100%);
-  transition: width 0.3s;
-  border-radius: 4px;
-}
-
+/* ========== Update Info Bar ========== */
 .update-info {
-  margin-top: 15px;
-  background: #f8f9fa;
+  margin-top: 16px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(71, 85, 99, 0.1);
+  border-radius: 12px;
+  backdrop-filter: blur(8px);
+}
+
+.update-info :deep(.el-card__body) {
+  padding: 10px 16px;
 }
 
 .update-time {
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 14px;
-  color: #606266;
+  gap: 6px;
+  font-size: 12px;
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
 }
 
-/* 迷你趋势图样式 */
+/* ========== Trend Charts ========== */
 .trend-card {
-  border-radius: 12px;
-  margin-bottom: 15px;
+  border-radius: 14px;
+  margin-bottom: 16px;
+  border: 1px solid rgba(71, 85, 99, 0.1);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+}
+
+.trend-card :deep(.el-card__header) {
+  padding: 12px 16px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.trend-card :deep(.el-card__body) {
+  padding: 12px 8px 8px;
 }
 
 .trend-header {
@@ -1380,17 +1503,17 @@ export default {
 }
 
 .trend-title {
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 600;
-  color: #303133;
+  color: #1a472a;
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
 .trend-icon {
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   object-fit: contain;
 }
 
@@ -1399,38 +1522,51 @@ export default {
   height: 150px;
 }
 
+/* ========== Loading & Offline States ========== */
 .loading-state {
   text-align: center;
-  padding: 100px 0;
-  color: #409eff;
+  padding: 80px 0;
+  color: #1a472a;
 }
 
 .loading-state p {
-  margin-top: 15px;
-  font-size: 16px;
+  margin-top: 12px;
+  font-size: 14px;
+  color: #475569;
 }
 
 .offline-status {
-  padding: 40px 20px;
-  background: white;
-  border-radius: 12px;
+  padding: 48px 24px;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 16px;
+  border: 1px solid rgba(71, 85, 99, 0.1);
   margin-top: 20px;
   text-align: center;
+  backdrop-filter: blur(8px);
 }
 
 .button-group {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   justify-content: center;
   flex-wrap: wrap;
 }
 
-/* 响应式设计 */
+/* ========== Responsive ========== */
 @media (max-width: 768px) {
+  .realtime-page {
+    padding: 16px;
+  }
+
   .page-header {
     flex-direction: column;
     align-items: flex-start;
-    gap: 15px;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+
+  .page-header h2 {
+    font-size: 16px;
   }
 
   .header-info {
@@ -1439,21 +1575,20 @@ export default {
   }
 
   .gauge-card {
-    height: 250px;
+    height: 240px;
   }
 
   .data-card {
-    height: auto;
-    min-height: 120px;
+    min-height: 130px;
   }
 
   .card-value {
-    font-size: 24px;
+    font-size: 18px;
   }
 }
 
+/* ========== Deep Overrides ========== */
 :deep(.el-card__body) {
-  height: 100%;
   display: flex;
   flex-direction: column;
 }
@@ -1461,12 +1596,23 @@ export default {
 .data-card :deep(.el-card__body) {
   display: flex;
   align-items: center;
-  gap: 15px;
-  padding: 16px 18px;
-  overflow: visible;
+  gap: 12px;
+  padding: 12px 14px;
+  min-height: 100%;
+  box-sizing: border-box;
 }
 
-:deep(.el-progress__text) {
-  display: none;
+:deep(.el-tag) {
+  border: none;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+:deep(.el-card) {
+  box-shadow: none;
+}
+
+:deep(.el-card.is-hover-shadow:hover) {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
 }
 </style>

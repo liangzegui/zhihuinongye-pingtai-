@@ -8,10 +8,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import jakarta.annotation.PostConstruct;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -33,6 +37,8 @@ import java.util.concurrent.TimeUnit;
  */
 @Service
 public class IoTDAServiceImpl implements IoTDAService {
+
+    private static final Logger logger = LoggerFactory.getLogger(IoTDAServiceImpl.class);
 
     // IoTDA配置 - 从application.properties读取
     @Value("${iotda.endpoint:https://iotda.cn-south-1.myhuaweicloud.com}")
@@ -60,10 +66,10 @@ public class IoTDAServiceImpl implements IoTDAService {
     private final SimpMessagingTemplate messagingTemplate;
 
     // 缓存最新的设备状态（从IoTDA数据推送更新）
-    private Map<String, Object> cachedDeviceStatus = new HashMap<>();
+    private final Map<String, Object> cachedDeviceStatus = new ConcurrentHashMap<>();
 
     // 缓存最新的传感器数据
-    private Map<String, Object> cachedSensorData = new HashMap<>();
+    private final Map<String, Object> cachedSensorData = new ConcurrentHashMap<>();
 
     public IoTDAServiceImpl(SimpMessagingTemplate messagingTemplate) {
         this.messagingTemplate = messagingTemplate;
@@ -96,12 +102,12 @@ public class IoTDAServiceImpl implements IoTDAService {
         cachedSensorData.put("co2", 400);
         cachedSensorData.put("tvoc", 0);
 
-        System.out.println("====== IoTDA服务初始化 ======");
-        System.out.println("Endpoint: " + endpoint);
-        System.out.println("Project ID: "
-                + (projectId.isEmpty() ? "未配置" : projectId.substring(0, Math.min(8, projectId.length())) + "..."));
-        System.out.println("Device ID: " + deviceId);
-        System.out.println("AK配置: " + (accessKey.isEmpty() ? "未配置" : "已配置"));
+        logger.info("====== IoTDA服务初始化 ======");
+        logger.info("Endpoint: {}", endpoint);
+        logger.info("Project ID: {}",
+                projectId.isEmpty() ? "未配置" : projectId.substring(0, Math.min(8, projectId.length())) + "...");
+        logger.info("Device ID: {}", deviceId);
+        logger.info("AK配置: {}", accessKey.isEmpty() ? "未配置" : "已配置");
     }
 
     @Override
@@ -111,7 +117,7 @@ public class IoTDAServiceImpl implements IoTDAService {
 
         // 如果没有配置IoTDA凭证，仅更新本地状态（演示模式）
         if (accessKey.isEmpty() || secretKey.isEmpty() || projectId.isEmpty()) {
-            System.out.println("[IoTDA-演示模式] 命令已缓存: " + commandName + "=" + value);
+            logger.info("[IoTDA-演示模式] 命令已缓存: {}={}", commandName, value);
             broadcastDeviceStatus();
             return true;
         }
@@ -119,7 +125,7 @@ public class IoTDAServiceImpl implements IoTDAService {
         // 本地演示模式：设置 IOTDA_DEMO_MODE=true 时跳过真实IoTDA调用
         boolean localDemoMode = Boolean.parseBoolean(System.getenv().getOrDefault("IOTDA_DEMO_MODE", "false"));
         if (localDemoMode) {
-            System.out.println("[IoTDA-本地模式] 命令已缓存（跳过API调用）: " + commandName + "=" + value);
+            logger.info("[IoTDA-本地模式] 命令已缓存（跳过API调用）: {}={}", commandName, value);
             broadcastDeviceStatus();
             return true;
         }
@@ -168,19 +174,19 @@ public class IoTDAServiceImpl implements IoTDAService {
 
             Request request = requestBuilder.build();
 
-            System.out.println("[IoTDA] 发送命令: " + commandName + "=" + value);
-            System.out.println("[IoTDA] URL: " + url);
+            logger.info("[IoTDA] 发送命令: {}={}", commandName, value);
+            logger.info("[IoTDA] URL: {}", url);
 
             // 发送请求
             try (Response response = httpClient.newCall(request).execute()) {
                 String responseBody = response.body() != null ? response.body().string() : "";
-                System.out.println("[IoTDA] 响应: " + response.code() + " - " + responseBody);
+                logger.info("[IoTDA] 响应: {} - {}", response.code(), responseBody);
 
                 if (response.isSuccessful()) {
                     broadcastDeviceStatus();
                     return true;
                 } else {
-                    System.err.println("[IoTDA] 命令发送失败: " + responseBody);
+                    logger.error("[IoTDA] 命令发送失败: {}", responseBody);
                     // 即使失败也广播状态（用于前端演示）
                     broadcastDeviceStatus();
                     return false;
@@ -188,11 +194,10 @@ public class IoTDAServiceImpl implements IoTDAService {
             }
 
         } catch (Exception e) {
-            System.err.println("[IoTDA] 发送命令异常: " + e.getMessage());
-            e.printStackTrace();
+            logger.error("[IoTDA] 发送命令异常: {}", e.getMessage());
             // 即使失败也广播状态（用于前端演示）
             broadcastDeviceStatus();
-            return true; // 暂时返回true用于测试
+            return false; // 命令发送失败
         }
     }
 
@@ -273,15 +278,15 @@ public class IoTDAServiceImpl implements IoTDAService {
                     String status = (String) deviceInfo.get("status");
                     boolean isOnline = "ONLINE".equalsIgnoreCase(status);
                     cachedDeviceStatus.put("online", isOnline);
-                    System.out.println("[IoTDA] 设备状态查询: " + (isOnline ? "在线" : "离线"));
+                    logger.info("[IoTDA] 设备状态查询: {}", isOnline ? "在线" : "离线");
                 } else {
-                    System.err.println("[IoTDA] 查询设备状态失败: " + response.code() + " - " + responseBody);
+                    logger.error("[IoTDA] 查询设备状态失败: {} - {}", response.code(), responseBody);
                     // 查询失败时保持现有状态
                 }
             }
 
         } catch (Exception e) {
-            System.err.println("[IoTDA] 查询设备状态异常: " + e.getMessage());
+            logger.error("[IoTDA] 查询设备状态异常: {}", e.getMessage());
             // 异常时保持现有状态
         }
     }
@@ -330,9 +335,9 @@ public class IoTDAServiceImpl implements IoTDAService {
             Map<String, Object> data = new HashMap<>(cachedSensorData);
             data.put("timestamp", System.currentTimeMillis());
             messagingTemplate.convertAndSend("/topic/sensor-data", data);
-            System.out.println("[WebSocket] 广播传感器数据: " + data);
+            logger.info("[WebSocket] 广播传感器数据: {}", data);
         } catch (Exception e) {
-            System.err.println("[WebSocket] 广播失败: " + e.getMessage());
+            logger.error("[WebSocket] 广播失败: {}", e.getMessage());
         }
     }
 
@@ -344,9 +349,9 @@ public class IoTDAServiceImpl implements IoTDAService {
             Map<String, Object> status = new HashMap<>(cachedDeviceStatus);
             status.put("timestamp", System.currentTimeMillis());
             messagingTemplate.convertAndSend("/topic/device-status", status);
-            System.out.println("[WebSocket] 广播设备状态: " + status);
+            logger.info("[WebSocket] 广播设备状态: {}", status);
         } catch (Exception e) {
-            System.err.println("[WebSocket] 广播失败: " + e.getMessage());
+            logger.error("[WebSocket] 广播失败: {}", e.getMessage());
         }
     }
 

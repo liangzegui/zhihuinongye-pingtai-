@@ -31,6 +31,15 @@ module.exports = defineConfig({
   // 开发服务器配置
   devServer: {
     port: devPort, // 前端开发服务器端口
+    client: {
+      overlay: {
+        runtimeErrors: (error) => {
+          // 忽略 ResizeObserver 的无害警告（放大/缩放页面时 ECharts 触发）
+          if (error.message && error.message.includes('ResizeObserver')) return false
+          return true
+        }
+      }
+    },
     proxy: {
       // 认证接口特殊处理：前端 /api/auth/* -> 后端 /auth/*
       '/api/auth': {

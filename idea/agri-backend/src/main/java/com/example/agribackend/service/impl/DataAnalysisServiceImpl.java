@@ -20,28 +20,32 @@ public class DataAnalysisServiceImpl implements DataAnalysisService {
     private EnvDataMapper envDataMapper;
     @Autowired
     private WarningLogMapper warningLogMapper;
-    
+
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("MM-dd HH:mm");
 
     private LocalDateTime getStartTime(String timeRange) {
-        if (timeRange == null || timeRange.equals("all")) return null;
+        if (timeRange == null || timeRange.equals("all"))
+            return null;
         LocalDateTime now = LocalDateTime.now();
         return switch (timeRange) {
-            case "1h"    -> now.minusHours(1);
-            case "6h"    -> now.minusHours(6);
-            case "12h"   -> now.minusHours(12);
-            case "24h"   -> now.minusDays(1);
-            case "7day"  -> now.minusDays(7);
+            case "1h" -> now.minusHours(1);
+            case "6h" -> now.minusHours(6);
+            case "12h" -> now.minusHours(12);
+            case "24h", "1day" -> now.minusDays(1);
+            case "3day" -> now.minusDays(3);
+            case "7day" -> now.minusDays(7);
+            case "14day" -> now.minusDays(14);
             case "30day" -> now.minusDays(30);
             case "90day" -> now.minusDays(90);
-            default      -> null;
+            default -> null;
         };
     }
-    
+
     private List<EnvDataEntity> getDataInRange(String timeRange) {
         LocalDateTime startTime = getStartTime(timeRange);
         LambdaQueryWrapper<EnvDataEntity> wrapper = new LambdaQueryWrapper<>();
-        if (startTime != null) wrapper.ge(EnvDataEntity::getCollectTime, startTime);
+        if (startTime != null)
+            wrapper.ge(EnvDataEntity::getCollectTime, startTime);
         wrapper.orderByAsc(EnvDataEntity::getCollectTime);
         return envDataMapper.selectList(wrapper);
     }
@@ -123,33 +127,39 @@ public class DataAnalysisServiceImpl implements DataAnalysisService {
     @Override
     public Map<String, Object> getDataSummary(String timeRange) {
         List<EnvDataEntity> dataList = getDataInRange(timeRange);
-        if (dataList.isEmpty()) return getEmptySummary();
+        if (dataList.isEmpty())
+            return getEmptySummary();
 
-        double avgTemp  = dataList.stream().filter(d -> d.getTemperature()    != null).mapToDouble(EnvDataEntity::getTemperature).average().orElse(0);
-        double avgHumi  = dataList.stream().filter(d -> d.getHumidity()       != null).mapToDouble(EnvDataEntity::getHumidity).average().orElse(0);
-        double avgLight = dataList.stream().filter(d -> d.getLightIntensity() != null).mapToInt(EnvDataEntity::getLightIntensity).average().orElse(0);
-        double avgCO2   = dataList.stream().filter(d -> d.getCo2()           != null).mapToInt(EnvDataEntity::getCo2).average().orElse(0);
+        double avgTemp = dataList.stream().filter(d -> d.getTemperature() != null)
+                .mapToDouble(EnvDataEntity::getTemperature).average().orElse(0);
+        double avgHumi = dataList.stream().filter(d -> d.getHumidity() != null).mapToDouble(EnvDataEntity::getHumidity)
+                .average().orElse(0);
+        double avgLight = dataList.stream().filter(d -> d.getLightIntensity() != null)
+                .mapToInt(EnvDataEntity::getLightIntensity).average().orElse(0);
+        double avgCO2 = dataList.stream().filter(d -> d.getCo2() != null).mapToInt(EnvDataEntity::getCo2).average()
+                .orElse(0);
 
         int halfSize = dataList.size() / 2;
         if (halfSize > 0) {
-            List<EnvDataEntity> first  = dataList.subList(0, halfSize);
+            List<EnvDataEntity> first = dataList.subList(0, halfSize);
             List<EnvDataEntity> second = dataList.subList(halfSize, dataList.size());
 
-            double tempTrend  = trend(first, second, d -> d.getTemperature()    != null ? d.getTemperature() : 0.0);
-            double humiTrend  = trend(first, second, d -> d.getHumidity()       != null ? d.getHumidity() : 0.0);
-            double lightTrend = trend(first, second, d -> d.getLightIntensity() != null ? (double) d.getLightIntensity() : 0.0);
-            double co2Trend   = trend(first, second, d -> d.getCo2()           != null ? (double) d.getCo2() : 0.0);
+            double tempTrend = trend(first, second, d -> d.getTemperature() != null ? d.getTemperature() : 0.0);
+            double humiTrend = trend(first, second, d -> d.getHumidity() != null ? d.getHumidity() : 0.0);
+            double lightTrend = trend(first, second,
+                    d -> d.getLightIntensity() != null ? (double) d.getLightIntensity() : 0.0);
+            double co2Trend = trend(first, second, d -> d.getCo2() != null ? (double) d.getCo2() : 0.0);
 
             Map<String, Object> r = new HashMap<>();
-            r.put("avgTemp",    Math.round(avgTemp  * 10.0) / 10.0);
-            r.put("avgHumi",    Math.round(avgHumi  * 10.0) / 10.0);
-            r.put("avgLight",   (int) avgLight);
-            r.put("avgCO2",     (int) avgCO2);
-            r.put("tempTrend",  Math.round(tempTrend  * 10.0) / 10.0);
-            r.put("humiTrend",  Math.round(humiTrend  * 10.0) / 10.0);
+            r.put("avgTemp", Math.round(avgTemp * 10.0) / 10.0);
+            r.put("avgHumi", Math.round(avgHumi * 10.0) / 10.0);
+            r.put("avgLight", (int) avgLight);
+            r.put("avgCO2", (int) avgCO2);
+            r.put("tempTrend", Math.round(tempTrend * 10.0) / 10.0);
+            r.put("humiTrend", Math.round(humiTrend * 10.0) / 10.0);
             r.put("lightTrend", Math.round(lightTrend * 10.0) / 10.0);
-            r.put("co2Trend",   Math.round(co2Trend   * 10.0) / 10.0);
-            r.put("dataCount",  dataList.size());
+            r.put("co2Trend", Math.round(co2Trend * 10.0) / 10.0);
+            r.put("dataCount", dataList.size());
             return r;
         }
         return getEmptySummary();
@@ -165,12 +175,12 @@ public class DataAnalysisServiceImpl implements DataAnalysisService {
         EnvDataEntity latest = envDataMapper.selectOne(latestWrap);
 
         if (latest != null) {
-            overview.put("temperature",    latest.getTemperature());
-            overview.put("humidity",       latest.getHumidity());
-            overview.put("soilAdc",        latest.getSoilAdc());
+            overview.put("temperature", latest.getTemperature());
+            overview.put("humidity", latest.getHumidity());
+            overview.put("soilAdc", latest.getSoilAdc());
             overview.put("lightIntensity", latest.getLightIntensity());
-            overview.put("co2",            latest.getCo2());
-            overview.put("collectTime",    latest.getCollectTime());
+            overview.put("co2", latest.getCo2());
+            overview.put("collectTime", latest.getCollectTime());
         }
 
         // 今日数据条数
@@ -192,7 +202,9 @@ public class DataAnalysisServiceImpl implements DataAnalysisService {
     // ==================== 工具方法 ====================
 
     @FunctionalInterface
-    private interface ValueExtractor { double extract(EnvDataEntity e); }
+    private interface ValueExtractor {
+        double extract(EnvDataEntity e);
+    }
 
     private double trend(List<EnvDataEntity> first, List<EnvDataEntity> second, ValueExtractor ex) {
         double a1 = first.stream().mapToDouble(ex::extract).average().orElse(0);
@@ -202,8 +214,14 @@ public class DataAnalysisServiceImpl implements DataAnalysisService {
 
     private Map<String, Object> getEmptySummary() {
         Map<String, Object> r = new HashMap<>();
-        r.put("avgTemp", 0); r.put("avgHumi", 0); r.put("avgLight", 0); r.put("avgCO2", 0);
-        r.put("tempTrend", 0); r.put("humiTrend", 0); r.put("lightTrend", 0); r.put("co2Trend", 0);
+        r.put("avgTemp", 0);
+        r.put("avgHumi", 0);
+        r.put("avgLight", 0);
+        r.put("avgCO2", 0);
+        r.put("tempTrend", 0);
+        r.put("humiTrend", 0);
+        r.put("lightTrend", 0);
+        r.put("co2Trend", 0);
         r.put("dataCount", 0);
         return r;
     }

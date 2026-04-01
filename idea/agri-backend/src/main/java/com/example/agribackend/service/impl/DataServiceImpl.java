@@ -16,12 +16,13 @@ public class DataServiceImpl implements DataService {
     private EnvDataMapper envDataMapper;
 
     @Override
-    public Page<EnvDataEntity> getHistoricalData(int page, int size, LocalDateTime startDate, LocalDateTime endDate) {
+    public Page<EnvDataEntity> getHistoricalData(int page, int size, LocalDateTime startDate, LocalDateTime endDate,
+            String sortOrder) {
         Page<EnvDataEntity> pageObj = new Page<>(page, size);
-        
+
         // 构建查询条件
         LambdaQueryWrapper<EnvDataEntity> queryWrapper = new LambdaQueryWrapper<>();
-        
+
         // 如果提供了时间范围，添加时间过滤条件
         if (startDate != null) {
             queryWrapper.ge(EnvDataEntity::getCollectTime, startDate);
@@ -29,10 +30,14 @@ public class DataServiceImpl implements DataService {
         if (endDate != null) {
             queryWrapper.le(EnvDataEntity::getCollectTime, endDate);
         }
-        
-        // 按采集时间降序排列（最新的在前）
-        queryWrapper.orderByDesc(EnvDataEntity::getCollectTime);
-        
+
+        // 根据排序参数决定排序方向
+        if ("asc".equalsIgnoreCase(sortOrder)) {
+            queryWrapper.orderByAsc(EnvDataEntity::getCollectTime);
+        } else {
+            queryWrapper.orderByDesc(EnvDataEntity::getCollectTime);
+        }
+
         return envDataMapper.selectPage(pageObj, queryWrapper);
     }
 }

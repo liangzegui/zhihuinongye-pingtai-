@@ -13,6 +13,9 @@ const service = axios.create({
   }
 });
 
+// 401去重标志，防止多个并发请求同时触发多次跳转登录页
+let isRedirectingToLogin = false;
+
 // 请求拦截器：自动携带Token
 service.interceptors.request.use(
   (config) => {
@@ -57,13 +60,18 @@ service.interceptors.response.use(
           ElMessage.error('请求参数错误：' + errorMsg);
           break;
         case 401:
-          // Token过期/未登录
-          clearAuthInfo();
-          ElMessage.error('登录已过期，请重新登录');
-          router.push({
-            path: '/login',
-            query: { redirect: router.currentRoute.value.fullPath }
-          });
+          // Token过期/未登录，防止多个并发请求同时触发多次跳转
+          if (!isRedirectingToLogin) {
+            isRedirectingToLogin = true;
+            clearAuthInfo();
+            ElMessage.error('登录已过期，请重新登录');
+            router.push({
+              path: '/login',
+              query: { redirect: router.currentRoute.value.fullPath }
+            });
+            // 2秒后重置标志，允许后续正常触发
+            setTimeout(() => { isRedirectingToLogin = false; }, 2000);
+          }
           break;
         case 403:
           ElMessage.error('无权限访问该资源');

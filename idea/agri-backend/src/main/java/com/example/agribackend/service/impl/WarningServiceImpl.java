@@ -59,13 +59,15 @@ public class WarningServiceImpl implements WarningService {
             QueryWrapper<EnvDataEntity> envWrapper = new QueryWrapper<>();
             envWrapper.orderByDesc("collect_time").last("LIMIT 1");
             EnvDataEntity latest = envDataMapper.selectOne(envWrapper);
-            if (latest == null) return;
+            if (latest == null)
+                return;
 
             // 2. 查询启用的规则
             QueryWrapper<WarningRuleEntity> ruleWrapper = new QueryWrapper<>();
             ruleWrapper.eq("enabled", 1);
             List<WarningRuleEntity> rules = warningRuleMapper.selectList(ruleWrapper);
-            if (rules.isEmpty()) return;
+            if (rules.isEmpty())
+                return;
 
             // 3. 读取各传感器检测开关
             boolean tempEnabled = exceptionConfigService.getBooleanConfig("detection_temp_enabled", true);
@@ -94,17 +96,31 @@ public class WarningServiceImpl implements WarningService {
                 Integer ruleId = rule.getId();
 
                 // ---------- 温度 ----------
-                if (tempEnabled && "temp_hum".equals(type) && latest.getTemperature() != null) {
+                if (tempEnabled && "temperature".equals(type) && latest.getTemperature() != null) {
                     checkAndInsert(sensorId, ruleId, "temperature", "温度",
                             latest.getTemperature(), min, max, "°C",
                             cooldownMinutes, warningRatio, dangerRatio, criticalRatio, autoHandle);
                 }
 
                 // ---------- 湿度 ----------
-                if (humidityEnabled && "temp_hum".equals(type) && latest.getHumidity() != null) {
+                if (humidityEnabled && "humidity".equals(type) && latest.getHumidity() != null) {
                     checkAndInsert(sensorId, ruleId, "humidity", "湿度",
                             latest.getHumidity(), min, max, "%",
                             cooldownMinutes, warningRatio, dangerRatio, criticalRatio, autoHandle);
+                }
+
+                // ---------- 兼容旧规则：temp_hum类型同时检查温度和湿度（使用相同阈值） ----------
+                if ("temp_hum".equals(type)) {
+                    if (tempEnabled && latest.getTemperature() != null) {
+                        checkAndInsert(sensorId, ruleId, "temperature", "温度",
+                                latest.getTemperature(), min, max, "°C",
+                                cooldownMinutes, warningRatio, dangerRatio, criticalRatio, autoHandle);
+                    }
+                    if (humidityEnabled && latest.getHumidity() != null) {
+                        checkAndInsert(sensorId, ruleId, "humidity", "湿度",
+                                latest.getHumidity(), min, max, "%",
+                                cooldownMinutes, warningRatio, dangerRatio, criticalRatio, autoHandle);
+                    }
                 }
 
                 // ---------- 土壤湿度(ADC) ----------
@@ -135,11 +151,11 @@ public class WarningServiceImpl implements WarningService {
 
     /** 比较单个维度并插入预警日志（支持冷却、严重程度、自动处理） */
     private void checkAndInsert(Integer sensorId, Integer ruleId,
-                                String warningType, String label,
-                                double value, Double min, Double max, String unit,
-                                int cooldownMinutes,
-                                double warningRatio, double dangerRatio, double criticalRatio,
-                                boolean autoHandle) {
+            String warningType, String label,
+            double value, Double min, Double max, String unit,
+            int cooldownMinutes,
+            double warningRatio, double dangerRatio, double criticalRatio,
+            boolean autoHandle) {
         String desc = null;
         Double threshold = null;
         double exceedAmount = 0;
@@ -160,9 +176,9 @@ public class WarningServiceImpl implements WarningService {
                 LocalDateTime cooldownStart = LocalDateTime.now().minusMinutes(cooldownMinutes);
                 QueryWrapper<WarningLogEntity> cooldownQw = new QueryWrapper<>();
                 cooldownQw.eq("warning_type", warningType)
-                          .ge("trigger_time", cooldownStart)
-                          .orderByDesc("trigger_time")
-                          .last("LIMIT 1");
+                        .ge("trigger_time", cooldownStart)
+                        .orderByDesc("trigger_time")
+                        .last("LIMIT 1");
                 WarningLogEntity recent = warningLogMapper.selectOne(cooldownQw);
                 if (recent != null) {
                     logger.debug("{}类型异常在冷却期内，跳过（上次: {}）", warningType, recent.getTriggerTime());
@@ -173,9 +189,9 @@ public class WarningServiceImpl implements WarningService {
             // ===== 严重程度分级 =====
             double ratio = (threshold != null && threshold != 0) ? exceedAmount / Math.abs(threshold) : 0;
             String severity;
-            if (ratio > dangerRatio) {
+            if (ratio > criticalRatio) {
                 severity = "严重";
-            } else if (ratio > warningRatio) {
+            } else if (ratio > dangerRatio) {
                 severity = "危险";
             } else {
                 severity = "警告";
@@ -202,7 +218,8 @@ public class WarningServiceImpl implements WarningService {
 
     /** 通过WebSocket推送预警通知到前端 */
     private void pushWarningNotification(WarningLogEntity log, String desc) {
-        if (messagingTemplate == null) return;
+        if (messagingTemplate == null)
+            return;
         try {
             Map<String, Object> payload = new HashMap<>();
             payload.put("id", log.getId());
@@ -231,8 +248,8 @@ public class WarningServiceImpl implements WarningService {
 
     @Override
     public Map<String, Object> getWarningLogsPaged(int page, int pageSize,
-                                                   String warningType, Integer status,
-                                                   String timeRange) {
+            String warningType, Integer status,
+            String timeRange) {
         Page<WarningLogEntity> pageObj = new Page<>(page, pageSize);
 
         QueryWrapper<WarningLogEntity> qw = new QueryWrapper<>();
@@ -272,13 +289,36 @@ public class WarningServiceImpl implements WarningService {
         return warningLogMapper.update(null, uw) > 0;
     }
 
+    @Override
+    public int batchMarkAsHandled(List<Integer> ids) {
+        if (ids == null || ids.isEmpty())
+            return 0;
+        UpdateWrapper<WarningLogEntity> uw = new UpdateWrapper<>();
+        uw.in("id", ids).set("status", 1);
+        return warningLogMapper.update(null, uw);
+    }
+
+    @Override
+    public int batchDelete(List<Integer> ids) {
+        if (ids == null || ids.isEmpty())
+            return 0;
+        return warningLogMapper.deleteByIds(ids);
+    }
+
+    @Override
+    public int clearHandled() {
+        QueryWrapper<WarningLogEntity> qw = new QueryWrapper<>();
+        qw.eq("status", 1);
+        return warningLogMapper.delete(qw);
+    }
+
     // ==================== 工具方法 ====================
 
     private LocalDateTime resolveStartTime(String timeRange) {
         LocalDateTime now = LocalDateTime.now();
         return switch (timeRange) {
             case "today" -> LocalDateTime.of(LocalDate.now(), LocalTime.MIN);
-            case "week"  -> now.minusDays(7);
+            case "week" -> now.minusDays(7);
             case "month" -> now.minusDays(30);
             default -> null;
         };

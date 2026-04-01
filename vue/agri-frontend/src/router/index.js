@@ -1,96 +1,86 @@
 import { createRouter, createWebHistory } from 'vue-router';
-import Login from '../views/Login.vue';
-import RealTime from '../views/RealTime.vue';
-// 引入其他页面（如HistoricalData、DataAnalysis等）
-import HistoricalData from '../views/HistoricalData.vue';
-import DataAnalysis from '../views/DataAnalysis.vue';
-import WarningLogs from '../views/WarningLogs.vue';
-import PersonalInfo from '../views/PersonalInfo.vue';
-import Register from '../views/Register.vue';
-import Home from '../views/Home.vue'; // 引入主控制台组件
-import Settings from '../views/Settings.vue'; // 系统设置页面
-import NotFound from '../views/NotFound.vue'; // 404页面
-import AdminManage from '../views/AdminManage.vue'; // 管理员中心
-import ControlHistory from '../views/ControlHistory.vue'; // 设备控制记录
 import { getToken, getRole } from '@/utils/token';
 
 const routes = [
   {
     path: '/login',
     name: 'Login',
-    component: Login,
-    meta: { noAuth: true, title: '登录' } // 标记为"无需登录"
+    component: () => import('../views/Login.vue'),
+    meta: { noAuth: true, title: '登录' }
   },
-  // 新增：主控制台（农场监控仪表盘）路由
   {
-    path: '/home', // 主控制台路径
+    path: '/home',
     name: 'Home',
-    component: Home,
-    meta: { title: '农场监控仪表盘' } // 需登录（未加noAuth即默认需要）
+    component: () => import('../views/Home.vue'),
+    meta: { title: '农场监控仪表盘' }
   },
   {
     path: '/register',
     name: 'Register',
-    component: Register,
-    meta: { noAuth: true, title: '注册' } // 标记为"无需登录"
+    component: () => import('../views/Register.vue'),
+    meta: { noAuth: true, title: '注册' }
   },
   {
     path: '/',
-    redirect: '/login' // 根路径默认跳登录页
+    redirect: () => {
+      // 已登录用户跳转主控台，未登录用户跳转登录页
+      const token = getToken()
+      return token ? '/home' : '/login'
+    }
   },
   {
     path: '/realtime',
     name: 'RealTime',
-    component: RealTime,
-    meta: { title: '实时环境数据' } // 需登录
+    component: () => import('../views/RealTime.vue'),
+    meta: { title: '实时环境数据' }
   },
   {
     path: '/historical',
     name: 'HistoricalData',
-    component: HistoricalData,
-    meta: { title: '历史数据查询' } // 需登录
+    component: () => import('../views/HistoricalData.vue'),
+    meta: { title: '历史数据查询' }
   },
   {
     path: '/analysis',
     name: 'DataAnalysis',
-    component: DataAnalysis,
-    meta: { title: '数据趋势分析' } // 需登录
+    component: () => import('../views/DataAnalysis.vue'),
+    meta: { title: '数据趋势分析' }
   },
   {
     path: '/warning',
     name: 'WarningLogs',
-    component: WarningLogs,
-    meta: { title: '警告日志记录' } // 需登录
+    component: () => import('../views/WarningLogs.vue'),
+    meta: { title: '警告日志记录' }
   },
   {
     path: '/profile',
     name: 'PersonalInfo',
-    component: PersonalInfo,
-    meta: { title: '个人信息中心' } // 需登录
+    component: () => import('../views/PersonalInfo.vue'),
+    meta: { title: '个人信息中心' }
   },
   {
     path: '/settings',
     name: 'Settings',
-    component: Settings,
-    meta: { title: '系统设置' } // 需登录
+    component: () => import('../views/Settings.vue'),
+    meta: { title: '系统设置' }
   },
   {
     path: '/control-history',
     name: 'ControlHistory',
-    component: ControlHistory,
+    component: () => import('../views/ControlHistory.vue'),
     meta: { title: '设备控制记录' }
   },
   {
     path: '/admin',
     name: 'AdminManage',
-    component: AdminManage,
+    component: () => import('../views/AdminManage.vue'),
     meta: { title: '管理员中心', requiresAdmin: true }
   },
   // 404 兜底路由（必须放最后）
   {
     path: '/:pathMatch(.*)*',
     name: 'NotFound',
-    component: NotFound,
+    component: () => import('../views/NotFound.vue'),
     meta: { noAuth: true, title: '页面未找到' }
   }
 ];

@@ -12,8 +12,9 @@ import java.util.Map;
 
 @Component
 public class JwtUtils {
-    // 🔴 关键修改：使用更长的密钥字符串（至少32个字符，确保≥256位）
-    private static final String SECRET_KEY_STR = "agri-backend-2025-secret-key-20251109-secure";
+    // JWT密钥：支持通过环境变量 JWT_SECRET 覆盖，部署时务必设置自定义密钥
+    private static final String SECRET_KEY_STR = System.getenv().getOrDefault(
+            "JWT_SECRET", "agri-backend-2025-secret-key-20251109-secure");
     private static final SecretKey SECRET_KEY = Keys.hmacShaKeyFor(SECRET_KEY_STR.getBytes(StandardCharsets.UTF_8));
     private static final long EXPIRATION = 7 * 24 * 60 * 60 * 1000; // Token有效期7天
 
