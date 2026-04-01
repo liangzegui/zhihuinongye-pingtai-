@@ -19,7 +19,7 @@
 ## 构建与启动
 
 ```bash
-# 后端（需要 MySQL agri_db 运行中，schema 见 huawei-cloud/database/schema.sql）
+# 后端（需要 MySQL agri_db 运行中）
 cd idea/agri-backend && ./mvnw.cmd spring-boot:run   # Windows
 cd idea/agri-backend && ./mvnw spring-boot:run        # Linux/Mac
 
@@ -59,8 +59,6 @@ cd vue/agri-frontend && npm install && npm run serve
 | `t_warning_rule` | 预警阈值规则 |
 | `t_device_status` | 设备最新状态与阈值配置 |
 
-完整建表语句: `huawei-cloud/database/schema.sql`
-
 ## ESP32 固件要点
 
 - 入口 `ESP32 demo/src/main.cpp`，PlatformIO 构建
@@ -72,4 +70,4 @@ cd vue/agri-frontend && npm install && npm run serve
 
 - 代码注释和 UI 文本均为**中文**，新增代码应保持中文注释风格
 - `User.java` 实体手写 getter/setter（未用 Lombok），其余实体用 `@Data`
-- 华为云 IoTDA 相关配置（AK/SK/设备 ID）在 `application.properties`，部署时必须通过环境变量覆盖
+- 华为云 IoTDA 相关配置（AK/SK/设备 ID）在 `application.properties`，可通过环境变量覆盖
