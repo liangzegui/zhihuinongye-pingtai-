@@ -611,6 +611,17 @@ export default {
         }
 
         if (data && typeof data === 'object') {
+          // 检查是否有断连期间的缓存数据恢复通知（只提示一次）
+          if (data.hasCachedData && data.cachedDataCount > 0 && !this._cachedDataNotified) {
+            this._cachedDataNotified = true
+            ElMessage.success({
+              message: `已接收断连期间的 ${data.cachedDataCount} 条缓存数据`,
+              duration: 5000
+            })
+            // 30秒后重置，允许下次断连恢复时再次提示
+            setTimeout(() => { this._cachedDataNotified = false }, 30000)
+          }
+
           // 新数据
           const newData = {
             temperature: this.validateNumber(data.temperature, 0, -50, 80),

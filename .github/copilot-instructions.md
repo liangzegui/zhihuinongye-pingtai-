@@ -2,17 +2,17 @@
 
 ## 架构概览
 
-全栈 IoT 智慧农业平台，三个独立组件通过 REST/WebSocket/MQTT 通信：
+全栈 IoT 智慧农业平台，三个独立组件通过 REST/WebSocket/HTTP 通信：
 
 - **后端** (`idea/agri-backend/`): Spring Boot 3.5 + Java 21 + MyBatis-Plus + MySQL
 - **前端** (`vue/agri-frontend/`): Vue 3 + Element Plus + ECharts + STOMP WebSocket
-- **固件** (`ESP32 demo/`): ESP32 Arduino/PlatformIO，通过 HTTP 和华为云 IoTDA MQTT 双通道上报
+- **固件** (`ESP32 demo/`): ESP32 Arduino/PlatformIO，通过 HTTP 直连后端上报
 
 共享端口配置在根目录 `project.config.json`（后端 8080，前端 8081），前后端均读取此文件。
 
 ## 数据流
 
-1. **ESP32 → 后端**: 直连 HTTP (`Esp32BridgeService`) 或 华为云 IoTDA Webhook (`IoTDAWebhookController`)
+1. **ESP32 → 后端**: 直连 HTTP (`Esp32BridgeService`)
 2. **后端 → 前端**: REST API (`/api/*`) + WebSocket STOMP (`/ws` 端点, 订阅 `/topic/sensor-data`, `/topic/device-status`)
 3. **设备控制**: 前端 → `DeviceControlController` → `Esp32BridgeService` HTTP 转发 → ESP32
 
@@ -33,7 +33,7 @@ cd vue/agri-frontend && npm install && npm run serve
 
 - **统一响应**: 所有 Controller 返回 `Result<T>`（见 `common/Result.java`），使用 `Result.success(data)` / `Result.error(msg)`
 - **分层结构**: Controller → Service 接口 → `impl/` 实现类 → Mapper（MyBatis-Plus `BaseMapper<Entity>`）
-- **JWT 认证**: `JwtInterceptor` 拦截所有路径，白名单: `/auth/**`, `/api/auth/**`, `/iotda/**`, `/ws/**`, 静态资源。Token 从 `Authorization: Bearer xxx` 头获取
+- **JWT 认证**: `JwtInterceptor` 拦截所有路径，白名单: `/auth/**`, `/api/auth/**`, `/ws/**`, 静态资源。Token 从 `Authorization: Bearer xxx` 头获取
 - **实体命名**: 表名 `t_env_data` 对应 `EnvDataEntity`，字段下划线自动转驼峰
 - **Mapper**: 优先用 MyBatis-Plus 注解；复杂查询用 XML（见 `resources/mapper/EnvDataMapper.xml`）
 - **密码**: BCrypt 加密（`UserService`），登录限流 5 次/10 分钟（`LoginAttemptService`）
@@ -62,7 +62,7 @@ cd vue/agri-frontend && npm install && npm run serve
 ## ESP32 固件要点
 
 - 入口 `ESP32 demo/src/main.cpp`，PlatformIO 构建
-- 双通道: 本地 AsyncWebServer（HTTP API 供后端直连）+ 华为云 IoTDA MQTT 上报
+- 本地 AsyncWebServer（HTTP API 供后端直连）
 - 自动控制阈值（温度/CO₂/土壤/光照）可通过网页或后端 API 动态调整
 - WiFiManager 配网，支持 DHCP 和静态 IP
 
@@ -70,4 +70,3 @@ cd vue/agri-frontend && npm install && npm run serve
 
 - 代码注释和 UI 文本均为**中文**，新增代码应保持中文注释风格
 - `User.java` 实体手写 getter/setter（未用 Lombok），其余实体用 `@Data`
-- 华为云 IoTDA 相关配置（AK/SK/设备 ID）在 `application.properties`，可通过环境变量覆盖

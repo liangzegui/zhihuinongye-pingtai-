@@ -175,4 +175,52 @@ public class SystemConfigController {
 
         return Result.success(result);
     }
+
+    // ==================== 离线缓存间隔配置 ====================
+
+    /**
+     * 获取ESP32离线缓存间隔配置及SD卡状态
+     */
+    @GetMapping("/cacheInterval")
+    public Result<Map<String, Object>> getCacheInterval() {
+        try {
+            Map<String, Object> data = esp32BridgeService.getCacheInterval();
+            if (data == null || data.isEmpty()) {
+                return Result.error(503, "ESP32未连接，无法获取缓存配置");
+            }
+            return Result.success(data);
+        } catch (Exception e) {
+            logger.error("获取缓存间隔配置失败", e);
+            return Result.error(503, "ESP32未连接：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 设置ESP32离线缓存间隔
+     */
+    @PostMapping("/cacheInterval")
+    public Result<Map<String, Object>> setCacheInterval(@RequestBody Map<String, Object> body) {
+        Object intervalObj = body.get("interval");
+        if (intervalObj == null) {
+            return Result.error(400, "缺少interval参数");
+        }
+
+        int interval;
+        try {
+            interval = Integer.parseInt(intervalObj.toString());
+        } catch (NumberFormatException e) {
+            return Result.error(400, "interval必须为整数");
+        }
+
+        if (interval < 5 || interval > 3600) {
+            return Result.error(400, "interval范围为5-3600秒");
+        }
+
+        boolean success = esp32BridgeService.setCacheInterval(interval);
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", success);
+        result.put("interval", interval);
+        result.put("message", success ? "缓存间隔已设置为" + interval + "秒" : "设置失败，请检查ESP32连接");
+        return Result.success(result);
+    }
 }

@@ -5,15 +5,15 @@
 ## 系统架构
 
 ```
-┌──────────────┐   MQTT/8883    ┌──────────────┐
-│    ESP32     │ ◄────────────► │  华为云 IoTDA │
-│   传感器节点  │                │   物联网平台   │
-└──────┬───────┘                └───────┬──────┘
-       │ HTTP (直连)             HTTP Webhook │
-       ▼                                     ▼
+┌──────────────┐
+│    ESP32     │
+│   传感器节点  │
+└──────┬───────┘
+       │ HTTP (直连)
+       ▼
 ┌─────────────────────────────────────────────────┐
 │           Spring Boot 后端 (:8080)               │
-│  REST API + WebSocket STOMP + IoTDA 北向API       │
+│  REST API + WebSocket STOMP                      │
 └────────┬──────────────────────────┬──────────────┘
          │ MySQL                    │ WebSocket/REST
          ▼                         ▼
@@ -25,7 +25,7 @@
 ```
 
 **数据流向：**
-1. ESP32 采集传感器数据 → 通过 HTTP 直连后端 或 华为云 IoTDA Webhook 转发
+1. ESP32 采集传感器数据 → 通过 HTTP 直连后端
 2. 后端处理存库 → 通过 WebSocket STOMP 推送给前端实时展示
 3. 前端发起设备控制 → 后端通过 HTTP 转发至 ESP32 执行
 
@@ -36,7 +36,6 @@
 | **后端** | Java 21 · Spring Boot 3.5 · MyBatis-Plus · MySQL 8.0 · WebSocket STOMP |
 | **前端** | Vue 3 · Element Plus · ECharts · SockJS + STOMP · Axios |
 | **固件** | ESP32 · PlatformIO · DHT22 · BH1750 · MQ-135 · AsyncWebServer |
-| **云平台** | 华为云 IoTDA（可选，支持纯直连模式） |
 
 ## 快速启动
 
@@ -61,7 +60,7 @@ PowerShell 用户也可执行：
 
 ```bash
 # 1. 初始化数据库
-mysql -u root -p < huawei-cloud/database/schema.sql
+mysql -u root -p < database/schema.sql
 
 # 2. 启动后端
 cd idea/agri-backend
@@ -113,7 +112,6 @@ docker-compose up -d
 │   │   │   ├── WarningRuleController   # 预警规则配置
 │   │   │   ├── AdminController         # 管理员管理
 │   │   │   ├── ControlHistoryController# 控制历史记录
-│   │   │   ├── IoTDAWebhookController  # 华为云数据接收
 │   │   │   └── SystemConfigController  # 系统配置
 │   │   ├── service/             # 业务层
 │   │   ├── mapper/              # 数据访问层（MyBatis-Plus）
@@ -151,11 +149,6 @@ docker-compose up -d
 │   ├── src/main.cpp             # 主程序入口
 │   └── platformio.ini           # PlatformIO 构建配置
 │
-├── huawei-cloud/                # ========== 华为云配置 ==========
-│   ├── database/schema.sql      # 完整建表语句
-│   ├── IoTDA配置指南.md          # FunctionGraph 方案配置
-│   └── 部署指南.md               # 华为云无服务器部署
-│
 └── deploy/                      # ========== 部署 ==========
     ├── 学生云服务器部署指南.md     # 传统服务器部署方案
     ├── deploy.sh                # 一键部署脚本
@@ -166,7 +159,7 @@ docker-compose up -d
 
 ## 数据库设计
 
-数据库名：`agri_db`，建表语句：[huawei-cloud/database/schema.sql](huawei-cloud/database/schema.sql)
+数据库名：`agri_db`
 
 | 表名 | 用途 | 关键字段 |
 |------|------|----------|
@@ -228,7 +221,7 @@ docker-compose up -d
 ### 后端
 - **统一响应格式**：所有接口返回 `Result<T>`，使用 `Result.success(data)` / `Result.error(msg)`
 - **分层结构**：Controller → Service 接口 → impl/ 实现类 → Mapper
-- **JWT 认证**：`JwtInterceptor` 拦截，白名单 `/auth/**`、`/iotda/**`、`/ws/**`
+- **JWT 认证**：`JwtInterceptor` 拦截，白名单 `/auth/**`、`/ws/**`
 - **实体映射**：表名 `t_env_data` → 实体 `EnvDataEntity`，下划线自动转驼峰
 - **密码加密**：BCrypt，登录限流 5 次/10 分钟
 
@@ -254,10 +247,6 @@ docker-compose up -d
 | `DATABASE_URL` | MySQL 连接串 | `jdbc:mysql://localhost:3306/agri_db` |
 | `DATABASE_USERNAME` | 数据库用户 | `root` |
 | `DATABASE_PASSWORD` | 数据库密码 | — |
-| `IOTDA_ENDPOINT` | 华为云 IoTDA 地址 | — |
-| `IOTDA_PROJECT_ID` | 华为云项目 ID | — |
-| `IOTDA_AK` / `IOTDA_SK` | 华为云访问密钥 | — |
-| `IOTDA_DEVICE_ID` | ESP32 设备 ID | — |
 | `ESP32_BASE_URL` | ESP32 局域网地址 | `http://192.168.2.92` |
 
 ---
@@ -270,9 +259,6 @@ docker-compose up -d
 |------|----------|------|
 | **Docker Compose** | 本地快速部署 | `docker-compose.yml` |
 | **学生云服务器** | 传统部署（单机） | [deploy/学生云服务器部署指南.md](deploy/学生云服务器部署指南.md) |
-| **华为云无服务器** | FunctionGraph + APIG | [huawei-cloud/部署指南.md](huawei-cloud/部署指南.md) |
-
-华为云 IoTDA 详细配置参见 [huawei-cloud/IoTDA配置指南.md](huawei-cloud/IoTDA配置指南.md)。
 
 ---
 

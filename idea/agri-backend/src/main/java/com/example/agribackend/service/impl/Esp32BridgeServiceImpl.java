@@ -1,7 +1,9 @@
 package com.example.agribackend.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.example.agribackend.entity.EnvDataEntity;
 import com.example.agribackend.entity.ExceptionConfigEntity;
+import com.example.agribackend.mapper.EnvDataMapper;
 import com.example.agribackend.mapper.ExceptionConfigMapper;
 import com.example.agribackend.service.Esp32BridgeService;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -10,6 +12,7 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -21,9 +24,13 @@ import org.slf4j.LoggerFactory;
 import java.net.URI;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 public class Esp32BridgeServiceImpl implements Esp32BridgeService {
@@ -36,6 +43,22 @@ public class Esp32BridgeServiceImpl implements Esp32BridgeService {
 
     @Autowired
     private ExceptionConfigMapper configMapper;
+
+    @Autowired
+    private EnvDataMapper envDataMapper;
+
+    // 上次请求ESP32 /data的时间戳（毫秒）
+    private volatile long lastFetchDataTime = 0;
+    // 心跳间隔：确保ESP32每15秒至少被访问一次，避免30秒超时误判离线
+    private static final long HEARTBEAT_INTERVAL_MS = 15_000;
+
+    // 防止并发拉取缓存数据
+    private final AtomicBoolean fetchingCachedData = new AtomicBoolean(false);
+    // 待通知前端的缓存数据条数
+    private final AtomicInteger pendingCachedCount = new AtomicInteger(0);
+    // 上次成功拉取缓存数据的时间（防止短时间内重复拉取）
+    private volatile long lastCachedFetchTime = 0;
+    private static final long CACHED_FETCH_COOLDOWN_MS = 60_000; // 60秒冷却
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -123,8 +146,26 @@ public class Esp32BridgeServiceImpl implements Esp32BridgeService {
         }
     }
 
+    /**
+     * 心跳定时任务：每15秒检查是否有其他调用方已经访问ESP32，
+     * 如果超过15秒没有请求，主动发起一次 /data 请求，避免ESP32误判离线。
+     */
+    @Scheduled(fixedRate = 15000)
+    public void heartbeat() {
+        long elapsed = System.currentTimeMillis() - lastFetchDataTime;
+        if (elapsed >= HEARTBEAT_INTERVAL_MS) {
+            try {
+                doGetJson("/data");
+                logger.debug("[ESP32] 心跳请求已发送");
+            } catch (Exception e) {
+                logger.debug("[ESP32] 心跳请求失败: {}", e.getMessage());
+            }
+        }
+    }
+
     @Override
     public Map<String, Object> fetchData() {
+        lastFetchDataTime = System.currentTimeMillis();
         return doGetJson("/data");
     }
 
@@ -215,6 +256,123 @@ public class Esp32BridgeServiceImpl implements Esp32BridgeService {
         status.put("lastUpdate", data.getOrDefault("lastUpdate", System.currentTimeMillis()));
         status.put("rawData", data);
         return status;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public int fetchCachedData() {
+        // 冷却期内不再重复拉取
+        if (System.currentTimeMillis() - lastCachedFetchTime < CACHED_FETCH_COOLDOWN_MS) {
+            logger.debug("[ESP32] 缓存数据拉取冷却中，跳过");
+            return -1;
+        }
+        if (!fetchingCachedData.compareAndSet(false, true)) {
+            logger.info("[ESP32] 缓存数据正在拉取中，跳过重复请求");
+            return -1;
+        }
+        try {
+            Map<String, Object> response = doGetJson("/cachedData");
+            if (response == null || response.isEmpty() || !response.containsKey("cached")) {
+                logger.info("[ESP32] 无缓存数据");
+                return 0;
+            }
+
+            List<Map<String, Object>> cachedList = (List<Map<String, Object>>) response.get("cached");
+            if (cachedList == null || cachedList.isEmpty()) {
+                logger.info("[ESP32] 缓存数据列表为空");
+                return 0;
+            }
+
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            int savedCount = 0;
+
+            for (Map<String, Object> item : cachedList) {
+                try {
+                    EnvDataEntity entity = new EnvDataEntity();
+                    entity.setSensorId(1);
+                    entity.setTemperature(readDouble(item, "temp"));
+                    entity.setHumidity(readDouble(item, "humi"));
+
+                    Double soilAdc = readDouble(item, "soil");
+                    if (soilAdc != null) {
+                        if (soilAdc < 0)
+                            soilAdc = 0.0;
+                        if (soilAdc > 4095)
+                            soilAdc = 4095.0;
+                        entity.setSoilAdc(soilAdc.intValue());
+                        entity.setSoilMoisture(Math.max(0, Math.min(100, (4095 - soilAdc) / 40.95)));
+                    }
+
+                    Double lightLux = readDouble(item, "lightLux");
+                    entity.setLightIntensity(lightLux != null ? Math.max(0, lightLux.intValue()) : null);
+
+                    Double eco2 = readDouble(item, "eco2");
+                    entity.setCo2(eco2 != null ? Math.max(0, eco2.intValue()) : null);
+
+                    entity.setSaveUsername("离线保存");
+
+                    // 解析ESP32端的实际采集时间
+                    Object ts = item.get("ts");
+                    if (ts != null) {
+                        entity.setCollectTime(LocalDateTime.parse(ts.toString(), formatter));
+                    } else {
+                        entity.setCollectTime(LocalDateTime.now());
+                    }
+
+                    envDataMapper.insert(entity);
+                    savedCount++;
+                } catch (Exception e) {
+                    logger.warn("[ESP32] 缓存数据记录解析失败: {}", e.getMessage());
+                }
+            }
+
+            if (savedCount > 0) {
+                pendingCachedCount.addAndGet(savedCount);
+            }
+            lastCachedFetchTime = System.currentTimeMillis();
+            logger.info("[ESP32] 成功保存 {} 条缓存数据（共 {} 条）", savedCount, cachedList.size());
+            return savedCount;
+        } catch (Exception e) {
+            logger.error("[ESP32] 获取缓存数据失败", e);
+            return -1;
+        } finally {
+            fetchingCachedData.set(false);
+        }
+    }
+
+    @Override
+    public int consumePendingCachedCount() {
+        return pendingCachedCount.getAndSet(0);
+    }
+
+    @Override
+    public Map<String, Object> getCacheInterval() {
+        return doGetJson("/getCacheInterval");
+    }
+
+    @Override
+    public boolean setCacheInterval(int interval) {
+        try {
+            URI uri = UriComponentsBuilder.fromHttpUrl(baseUrl)
+                    .path("/setCacheInterval")
+                    .queryParam("interval", interval)
+                    .build(true)
+                    .toUri();
+            ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
+            boolean success = response.getStatusCode().is2xxSuccessful();
+            if (success) {
+                logger.info("[ESP32] 缓存间隔设置成功: {}秒", interval);
+            } else {
+                logger.warn("[ESP32] 缓存间隔设置失败，状态码: {}", response.getStatusCode());
+            }
+            return success;
+        } catch (RestClientException e) {
+            logger.error("[ESP32] 网络连接失败，无法设置缓存间隔: {}", e.getMessage());
+            return false;
+        } catch (Exception e) {
+            logger.error("[ESP32] 缓存间隔设置异常", e);
+            return false;
+        }
     }
 
     private Double readDouble(Map<String, Object> data, String... keys) {

@@ -31,11 +31,10 @@
                 id="oldPwd"
                 :type="showOldPwd ? 'text' : 'password'" 
                 v-model="oldPwd" 
-                placeholder=" " 
-                class="form-input"
+              placeholder="请输入原密码" 
+              class="form-input"
                 required
               />
-              <label for="oldPwd" class="floating-label">请输入原密码</label>
               <button 
                 type="button" 
                 class="toggle-btn" 
@@ -54,12 +53,11 @@
                 id="newPwd"
                 :type="showNewPwd ? 'text' : 'password'" 
                 v-model="newPwd" 
-                placeholder=" " 
-                class="form-input"
+              placeholder="请输入新密码（至少6位）" 
+              class="form-input"
                 required
                 minlength="6"
               />
-              <label for="newPwd" class="floating-label">请输入新密码（至少6位）</label>
               <button 
                 type="button" 
                 class="toggle-btn" 
@@ -78,11 +76,10 @@
                 id="confirmPwd"
                 :type="showConfirmPwd ? 'text' : 'password'" 
                 v-model="confirmPwd" 
-                placeholder=" " 
-                class="form-input"
+              placeholder="请确认新密码" 
+              class="form-input"
                 required
               />
-              <label for="confirmPwd" class="floating-label">请确认新密码</label>
               <button 
                 type="button" 
                 class="toggle-btn" 
@@ -375,29 +372,6 @@ export default {
 
 .icon-lock::before {
   content: "🔒";
-}
-
-/* 浮动标签样式 */
-.floating-label {
-  position: absolute;
-  left: 48px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: #94a3b8;
-  font-size: 14px;
-  pointer-events: none;
-  transition: all 0.2s ease;
-  background: transparent;
-  padding: 0 6px;
-}
-
-/* 输入框有内容或聚焦时，标签缩小上移 */
-.form-input:focus + .floating-label,
-.form-input:not(:placeholder-shown) + .floating-label {
-  top: 0;
-  font-size: 12px;
-  color: #3a7d44;
-  background: white;
 }
 
 /* 密码显示/隐藏按钮 */

@@ -1,6 +1,6 @@
 /**
- * 设备控制API（华为云无服务器架构）
- * 通过API Gateway调用FunctionGraph控制ESP32设备
+ * 设备控制API
+ * 通过后端服务HTTP直连控制ESP32设备
  */
 import request from '@/utils/request'
 

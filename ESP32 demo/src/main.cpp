@@ -1,20 +1,22 @@
-#include <Arduino.h>
+﻿#include <Arduino.h>
 #include <Wire.h>
 #include <U8g2lib.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
-#include <WiFiClientSecure.h>
-#include <PubSubClient.h>
+// #include <WiFiClientSecure.h>   // MQTT已禁用
+// #include <PubSubClient.h>        // MQTT已禁用
 #include <time.h>        // 【新增】NTP时间函数所需头文件
 #include <Preferences.h> // 【新增】阈值持久化存储
-#include <mbedtls/md.h>  // 【新增】HMAC-SHA256签名所需头文件
+// #include <mbedtls/md.h>  // MQTT已禁用（HMAC签名）
+#include <SD.h>          // 【新增】SD卡读写
+#include <SPI.h>         // 【新增】SPI总线（SD卡通信）
 
 // ==============================================================================
 // OLED屏幕配置
 // ==============================================================================
-U8G2_SSD1315_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+U8G2_SSD1315_128X64_NONAME_F_HW_I2C u8g2(U8G2_R2, U8X8_PIN_NONE);
 
 // ==============================================================================
 // WiFi & 异步WebServer配置
@@ -54,29 +56,27 @@ int lightLuxThreshold = 800;      // 光照强度阈值(lux) - 低于此值开�
 // 【新增】Preferences对象用于阈值持久化
 Preferences preferences;
 
+/* ============================================================================
+// 华为 IoTDA MQTT 配置（已禁用）
 // ============================================================================
-// 华为 IoTDA MQTT 配置
-// ============================================================================
-const char *mqttHost = "0c303a8ecf.st1.iotda-device.cn-south-1.myhuaweicloud.com"; // 来自控制台直连参数
+const char *mqttHost = "0c303a8ecf.st1.iotda-device.cn-south-1.myhuaweicloud.com";
 const uint16_t mqttPort = 8883;
 const char *mqttDeviceId = "69568516c00ccb6d4b302187_esp32-001";
-const char *mqttUsername = mqttDeviceId; // IoTDA 要求用户名为设备ID
-// 【删除】原硬编码的mqttPassword = "Lzg551162"，改为动态计算
-const char *deviceSecret = "Lzg551162";  // 【新增】设备密钥明文，用于HMAC-SHA256签名
+const char *mqttUsername = mqttDeviceId;
+const char *deviceSecret = "Lzg551162";
 
 WiFiClientSecure mqttSecureClient;
 PubSubClient mqttClient(mqttSecureClient);
 
-// 【删除】原硬编码的mqttClientId，改为在ensureMqttConnection()中动态生成
-// clientId格式：deviceId + "_0_0_" + timestamp(yyyyMMddHH)
 String mqttTopicReport = String("$oc/devices/") + mqttDeviceId + "/sys/properties/report";
 String mqttTopicCommand = String("$oc/devices/") + mqttDeviceId + "/sys/commands/#";
 String mqttTopicPropSet = String("$oc/devices/") + mqttDeviceId + "/sys/properties/set/#";
 
 unsigned long lastMqttReconnect = 0;
-const unsigned long mqttReconnectInterval = 5000;
+const unsigned long mqttReconnectInterval = 30000;
 unsigned long lastMqttPublish = 0;
-const unsigned long mqttPublishInterval = 10000; // 10 秒上报一次
+const unsigned long mqttPublishInterval = 10000;
+*/
 
 // ==============================================================================
 // 传感器&执行器引脚定义
@@ -91,6 +91,7 @@ const unsigned long mqttPublishInterval = 10000; // 10 秒上报一次
 #define FAN_PIN 25
 #define FAN_PIN2 26
 #define LIGHT_LAMP_PIN 2  
+#define SD_CS_PIN 5       // SD卡片选引脚（VSPI默认）
 #define SGP30_ADDR 0x58
 #define SGP30_INIT_RETRY 3
 #define SGP30_WARM_UP_TIME 10000
@@ -99,7 +100,7 @@ const unsigned long mqttPublishInterval = 10000; // 10 秒上报一次
 // 传感器参数配置
 // ==============================================================================
 #define READ_INTERVAL 1000
-#define SERIAL_PRINT_INTERVAL 1000
+#define SERIAL_PRINT_INTERVAL 20000
 #define LUX_MAX 8800
 #define LUX_MIN 50
 #define ULTRA_BRIGHT_AO 100
@@ -118,6 +119,12 @@ const unsigned long mqttPublishInterval = 10000; // 10 秒上报一次
 #define SOIL_EXTREME_DROUGHT_AO 4000
 
 // ==============================================================================
+// 土壤传感器滤波参数（修复ADC读取不稳定问题）
+// ==============================================================================
+#define SOIL_SAMPLES 10  // 每次采样的次数，用于平均值滤波
+#define SOIL_FILTER_ALPHA 0.3  // 一阶低通滤波系数（0-1，值越小滤波越强）
+
+// ==============================================================================
 // 全局状态变量
 // ==============================================================================
 int lastLightLevel = -1;
@@ -128,7 +135,12 @@ int lastDhtHumi = 0;
 String lastDhtStatus = "";
 int lastSoilAO = -1;
 int lastSoilDO = -1;
+float filteredSoilAO = -1;  // 【修复】存储滤波后的土壤ADC值
 String lastSoilStatus = "";
+bool soilSensorError = false;  // 【新增】土壤传感器故障标志
+unsigned long soilErrorTime = 0;  // 【新增】记录故障时间
+int errorCountsAO = 0;  // 【新增】连续异常计数（防止假报警）
+#define ERROR_THRESHOLD 3  // 【新增】连续3次异常判定为故障
 bool pumpState = false;
 bool fanState = false;
 bool lightState = false;
@@ -137,6 +149,19 @@ uint16_t lastTvoc = 0;
 bool sgp30Available = false;
 unsigned long sgp30WarmUpStart = 0;
 unsigned long lastSerialPrintTime = 0;
+
+// ==============================================================================
+// 【新增】SD卡离线缓存相关变量
+// ==============================================================================
+bool sdCardAvailable = false;           // SD卡是否可用
+volatile bool sdCachePending = false;   // 是否存在待取走的缓存数据（避免网页轮询时频繁访问SD）
+SPIClass spiSD(VSPI);                   // SD卡专用SPI实例（必须全局，否则函数返回后被销毁导致崩溃）
+const char* SD_CACHE_FILE = "/cache.jsonl"; // 缓存文件路径（JSON Lines格式）
+unsigned long lastCacheWrite = 0;       // 上次缓存写入时间
+unsigned long cacheWriteInterval = 10000; // 缓存写入间隔（默认10秒，可通过网页设置）
+volatile unsigned long lastWebPoll = 0;  // 上次网页端轮询/data的时间（volatile：跨核访问）
+const unsigned long webDisconnectTimeout = 60000; // 超过60秒没轮询才视为断连
+volatile bool webClientConnected = false; // 网页端是否在线（volatile：跨核访问）
 
 // ==============================================================================
 // 函数声明
@@ -151,22 +176,32 @@ void handleNotFound(AsyncWebServerRequest *request);
 void handleSetThresholds(AsyncWebServerRequest *request);
 void handleGetThresholds(AsyncWebServerRequest *request);
 void configModeCallback(WiFiManager *myWiFiManager);
-void mqttCallback(char *topic, byte *payload, unsigned int length);
-void ensureMqttConnection();
-void publishTelemetry();
-String generateTimestamp();                                           // 【新增】生成yyyyMMddHH格式时间戳
-String generateMqttPassword(const char* secret, const String& timestamp); // 【新增】HMAC-SHA256签名生成密码
-void handleRemoteProperties(const JsonVariant &properties);
+// MQTT相关函数声明（已禁用）
+// void mqttCallback(char *topic, byte *payload, unsigned int length);
+// void ensureMqttConnection();
+// void publishTelemetry();
+// String generateTimestamp();
+// String generateMqttPassword(const char* secret, const String& timestamp);
+// void handleRemoteProperties(const JsonVariant &properties);
 void i2cScan();
 bool sgp30Init();
 void sgp30ReadData(uint16_t &eco2, uint16_t &tvoc);
-void updateOLED(float lightLux, String lightZone, int temp, int humi, int soilAO, String soilStatus, uint16_t eco2, uint16_t tvoc);
+void updateOLED(float lightLux, const String &lightZone, int temp, int humi, int soilAO, const String &soilStatus, uint16_t eco2, uint16_t tvoc);
 void calculateLightIntensity(int aoValue, float &lux, String &zone);
 void updateSoilStatus(int aoValue, String &status);
 void updateDhtStatus(int temp, int humi, String &status);
 void controlPump(bool enable);
 void controlFan(bool enable);
 void handlePendingStarts();
+int readSoilSensorRaw();
+float filterSoilAO(float rawValue);
+void checkSoilSensorHealth(int rawAO, int soilDO);
+bool initSDCard();                    // 【新增】SD卡初始化
+void cacheDataToSD();                 // 【新增】将传感器数据缓存到SD卡
+void handleCachedData(AsyncWebServerRequest *request); // 【新增】HTTP接口返回缓存数据
+bool hasSDCachedData();               // 【新增】检查SD卡是否有缓存数据
+void handleSetCacheInterval(AsyncWebServerRequest *request); // 【新增】设置缓存间隔
+void handleGetCacheInterval(AsyncWebServerRequest *request); // 【新增】获取缓存间隔
 
 // ==============================================================================
 // DHT11类
@@ -444,7 +479,7 @@ void sgp30ReadData(uint16_t &eco2, uint16_t &tvoc) {
 // ==============================================================================
 // OLED更新函数
 // ==============================================================================
-void updateOLED(float lightLux, String lightZone, int temp, int humi, int soilAO, String soilStatus, uint16_t eco2, uint16_t tvoc) {
+void updateOLED(float lightLux, const String &lightZone, int temp, int humi, int soilAO, const String &soilStatus, uint16_t eco2, uint16_t tvoc) {
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_wqy12_t_gb2312);
 
@@ -519,7 +554,80 @@ void calculateLightIntensity(int aoValue, float &lux, String &zone) {
 }
 
 // ==============================================================================
-// 土壤湿度状态更新函数
+// 【修复】土壤传感器原始值读取函数 - 多采样平均
+// ==============================================================================
+int readSoilSensorRaw() {
+  long sum = 0;
+  for (int i = 0; i < SOIL_SAMPLES; i++) {
+    sum += analogRead(SOIL_AO_PIN);
+    delayMicroseconds(100);  // 采样间隔
+  }
+  return (int)(sum / SOIL_SAMPLES);  // 返回平均值
+}
+
+// ==============================================================================
+// 【修复】土壤传感器滤波函数 - 一阶低通滤波
+// ==============================================================================
+float filterSoilAO(float rawValue) {
+  if (filteredSoilAO < 0) {
+    // 首次读取，初始化滤波值
+    filteredSoilAO = rawValue;
+  } else {
+    // 一阶低通滤波：y = α*x + (1-α)*y_prev
+    filteredSoilAO = SOIL_FILTER_ALPHA * rawValue + (1.0 - SOIL_FILTER_ALPHA) * filteredSoilAO;
+  }
+  return filteredSoilAO;
+}
+
+// ==============================================================================
+// 【新增】土壤传感器故障检测函数 - 连续异常判定
+// ==============================================================================
+void checkSoilSensorHealth(int rawAO, int doPin) {
+  // 判断AO值是否异常（悬空或接触不良）
+  bool aoAbnormal = (rawAO >= 4090 || rawAO <= 10);
+
+  // 判断DO值是否合理（DO应该和AO值匹配：干旱时DO=0，潮湿时DO=1）
+  bool doAbnormal = false;
+  if (!soilSensorError) {  // 只在非故障状态下检查DO-AO配合
+    // 如果AO显示很干（>3500）但DO=1（数字触发），可能接线问题
+    if (rawAO > 3500 && doPin == 1) doAbnormal = true;
+  }
+
+  // 计算异常计数
+  if (aoAbnormal || doAbnormal) {
+    errorCountsAO++;
+    if (errorCountsAO >= ERROR_THRESHOLD) {
+      if (!soilSensorError) {  // 从正常→故障
+        soilSensorError = true;
+        soilErrorTime = millis();
+        filteredSoilAO = -1;  // 清除滤波值，强制重新初始化
+        Serial.println("\n【严重警告】土壤传感器故障检测-连续异常!");
+        if (aoAbnormal) {
+          if (rawAO >= 4090) {
+            Serial.println("  AO值过高(≈4095) → 检查GPIO35接线或AO标签");
+          } else {
+            Serial.println("  AO值过低(≈0) → 检查GND连接");
+          }
+        }
+        if (doAbnormal) {
+          Serial.println("  DO值与AO值不匹配 → 检查DO接线或传感器阈值设置");
+        }
+      }
+    }
+  } else {
+    // 正常读数，计数清零
+    if (errorCountsAO > 0) {
+      errorCountsAO = 0;
+    }
+    if (soilSensorError) {  // 从故障→正常
+      Serial.println("【恢复】土壤传感器已恢复正常!");
+    }
+    soilSensorError = false;
+  }
+}
+
+// ==============================================================================
+// 【原有】土壤湿度状态更新函数
 // ==============================================================================
 void updateSoilStatus(int aoValue, String &status) {
   if (aoValue <= SOIL_OVER_WET_AO) {
@@ -552,706 +660,739 @@ void updateDhtStatus(int temp, int humi, String &status) {
 // 异步WebServer处理函数
 // ==============================================================================
 void handleRoot(AsyncWebServerRequest *request) {
-  String html = "<!DOCTYPE html><html lang='zh-CN'>";
-  html += "<head>";
-  html += "<meta charset='UTF-8'>";
-  html += "<meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0'>";
-  html += "<title>ESP32智能环境监控系统</title>";
-  html += "<link rel='stylesheet' href='https://cdn.bootcdn.net/ajax/libs/font-awesome/6.4.0/css/all.min.css'>";
-  html += "<style>";
-  html += ":root {";
-  html += "  --color-primary: #2563eb;";
-  html += "  --color-success: #10b981;";
-  html += "  --color-warning: #f59e0b;";
-  html += "  --color-danger: #ef4444;";
-  html += "  --color-info: #3b82f6;";
-  html += "  --color-dark: #1f2937;";
-  html += "  --color-light: #f3f4f6;";
-  html += "  --color-gray: #6b7280;";
-  html += "  --shadow-sm: 0 2px 4px rgba(0,0,0,0.05);";
-  html += "  --shadow-md: 0 4px 6px rgba(0,0,0,0.1);";
-  html += "  --shadow-lg: 0 10px 15px rgba(0,0,0,0.1);";
-  html += "  --radius-sm: 6px;";
-  html += "  --radius-md: 12px;";
-  html += "  --radius-lg: 16px;";
-  html += "  --transition: all 0.2s ease;";
-  html += "}";
-  html += "* { margin: 0; padding: 0; box-sizing: border-box; }";
-  html += "body {";
-  html += "  font-family: 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;";
-  html += "  background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);";
-  html += "  min-height: 100vh;";
-  html += "  color: var(--color-dark);";
-  html += "  padding-bottom: 20px;";
-  html += "}";
-  html += ".navbar {";
-  html += "  background: white;";
-  html += "  box-shadow: var(--shadow-sm);";
-  html += "  padding: 15px 20px;";
-  html += "  position: sticky;";
-  html += "  top: 0;";
-  html += "  z-index: 100;";
-  html += "  display: flex;";
-  html += "  justify-content: space-between;";
-  html += "  align-items: center;";
-  html += "}";
-  html += ".navbar-title {";
-  html += "  font-size: 18px;";
-  html += "  font-weight: 600;";
-  html += "  color: var(--color-primary);";
-  html += "}";
-  html += ".status-bar {";
-  html += "  display: flex;";
-  html += "  align-items: center;";
-  html += "  gap: 10px;";
-  html += "}";
-  html += ".status-indicator {";
-  html += "  display: flex;";
-  html += "  align-items: center;";
-  html += "  font-size: 14px;";
-  html += "}";
-  html += ".status-dot {";
-  html += "  width: 10px;";
-  html += "  height: 10px;";
-  html += "  border-radius: 50%;";
-  html += "  margin-right: 5px;";
-  html += "  animation: pulse 2s infinite;";
-  html += "}";
-  html += ".status-online { background: var(--color-success); }";
-  html += ".status-offline { background: var(--color-danger); }";
-  html += ".mode-switch {";
-  html += "  padding: 8px 16px;";
-  html += "  border-radius: var(--radius-sm);";
-  html += "  border: none;";
-  html += "  background: var(--color-primary);";
-  html += "  color: white;";
-  html += "  font-size: 14px;";
-  html += "  cursor: pointer;";
-  html += "  transition: var(--transition);";
-  html += "}";
-  html += ".mode-switch:hover { opacity: 0.9; }";
-  html += ".mode-auto { background: var(--color-warning); }";
-  html += ".container {";
-  html += "  max-width: 1200px;";
-  html += "  margin: 20px auto;";
-  html += "  padding: 0 20px;";
-  html += "}";
-  html += ".overview-grid {";
-  html += "  display: grid;";
-  html += "  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));";
-  html += "  gap: 15px;";
-  html += "  margin-bottom: 25px;";
-  html += "}";
-  html += ".card {";
-  html += "  background: white;";
-  html += "  border-radius: var(--radius-md);";
-  html += "  box-shadow: var(--shadow-sm);";
-  html += "  padding: 20px;";
-  html += "  transition: var(--transition);";
-  html += "}";
-  html += ".card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }";
-  html += ".card-header {";
-  html += "  display: flex;";
-  html += "  justify-content: space-between;";
-  html += "  align-items: center;";
-  html += "  margin-bottom: 15px;";
-  html += "  padding-bottom: 10px;";
-  html += "  border-bottom: 1px solid var(--color-light);";
-  html += "}";
-  html += ".card-title {";
-  html += "  font-size: 16px;";
-  html += "  font-weight: 600;";
-  html += "  color: var(--color-dark);";
-  html += "}";
-  html += ".card-icon {";
-  html += "  width: 32px;";
-  html += "  height: 32px;";
-  html += "  border-radius: 50%;";
-  html += "  background: var(--color-light);";
-  html += "  display: flex;";
-  html += "  align-items: center;";
-  html += "  justify-content: center;";
-  html += "  color: var(--color-primary);";
-  html += "}";
-  html += ".data-value {";
-  html += "  font-size: 24px;";
-  html += "  font-weight: 700;";
-  html += "  margin-bottom: 10px;";
-  html += "}";
-  html += ".data-unit { font-size: 14px; color: var(--color-gray); }";
-  html += ".data-status {";
-  html += "  font-size: 14px;";
-  html += "  padding: 3px 8px;";
-  html += "  border-radius: 20px;";
-  html += "  display: inline-block;";
-  html += "  margin-top: 5px;";
-  html += "}";
-  html += ".status-normal { background: rgba(16, 185, 129, 0.1); color: var(--color-success); }";
-  html += ".status-warning { background: rgba(245, 158, 11, 0.1); color: var(--color-warning); }";
-  html += ".status-danger { background: rgba(239, 68, 68, 0.1); color: var(--color-danger); }";
-  html += ".status-info { background: rgba(59, 130, 246, 0.1); color: var(--color-info); }";
-  html += ".progress-container {";
-  html += "  width: 100%;";
-  html += "  height: 8px;";
-  html += "  background: var(--color-light);";
-  html += "  border-radius: 4px;";
-  html += "  margin: 10px 0;";
-  html += "}";
-  html += ".progress-bar {";
-  html += "  height: 100%;";
-  html += "  border-radius: 4px;";
-  html += "  transition: width 0.3s ease;";
-  html += "}";
-  html += ".progress-normal { background: var(--color-success); }";
-  html += ".progress-warning { background: var(--color-warning); }";
-  html += ".progress-danger { background: var(--color-danger); }";
-  html += ".detail-section {";
-  html += "  background: white;";
-  html += "  border-radius: var(--radius-md);";
-  html += "  box-shadow: var(--shadow-sm);";
-  html += "  padding: 20px;";
-  html += "  margin-bottom: 25px;";
-  html += "}";
-  html += ".section-title {";
-  html += "  font-size: 18px;";
-  html += "  font-weight: 600;";
-  html += "  margin-bottom: 20px;";
-  html += "  color: var(--color-primary);";
-  html += "}";
-  html += ".detail-grid {";
-  html += "  display: grid;";
-  html += "  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));";
-  html += "  gap: 15px;";
-  html += "}";
-  html += ".detail-item {";
-  html += "  padding: 10px;";
-  html += "  border-radius: var(--radius-sm);";
-  html += "  background: var(--color-light);";
-  html += "}";
-  html += ".detail-label { font-size: 14px; color: var(--color-gray); margin-bottom: 5px; }";
-  html += ".detail-value { font-size: 16px; font-weight: 600; }";
-  html += ".control-section {";
-  html += "  background: white;";
-  html += "  border-radius: var(--radius-md);";
-  html += "  box-shadow: var(--shadow-sm);";
-  html += "  padding: 20px;";
-  html += "}";
-  html += ".control-grid {";
-  html += "  display: grid;";
-  html += "  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));";
-  html += "  gap: 20px;";
-  html += "}";
-  html += ".control-card {";
-  html += "  border: 1px solid var(--color-light);";
-  html += "  border-radius: var(--radius-md);";
-  html += "  padding: 15px;";
-  html += "}";
-  html += ".control-device {";
-  html += "  display: flex;";
-  html += "  justify-content: space-between;";
-  html += "  align-items: center;";
-  html += "  margin-bottom: 15px;";
-  html += "}";
-  html += ".device-name {";
-  html += "  font-size: 16px;";
-  html += "  font-weight: 600;";
-  html += "}";
-  html += ".toggle-switch {";
-  html += "  position: relative;";
-  html += "  width: 50px;";
-  html += "  height: 26px;";
-  html += "  display: inline-block;";
-  html += "}";
-  html += ".toggle-switch input { opacity: 0; width: 0; height: 0; }";
-  html += ".toggle-slider {";
-  html += "  position: absolute;";
-  html += "  cursor: pointer;";
-  html += "  top: 0; left: 0; right: 0; bottom: 0;";
-  html += "  background-color: #ccc;";
-  html += "  transition: .4s;";
-  html += "  border-radius: 34px;";
-  html += "}";
-  html += ".toggle-slider:before {";
-  html += "  position: absolute;";
-  html += "  content: \"\";";
-  html += "  height: 18px;";
-  html += "  width: 18px;";
-  html += "  left: 4px;";
-  html += "  bottom: 4px;";
-  html += "  background-color: white;";
-  html += "  transition: .4s;";
-  html += "  border-radius: 50%;";
-  html += "}";
-  html += "input:checked + .toggle-slider { background-color: var(--color-success); }";
-  html += "input:checked + .toggle-slider:before { transform: translateX(24px); }";
-  html += "input:disabled + .toggle-slider { background-color: #e5e7eb; cursor: not-allowed; }";
-  html += "@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }";
-  html += "@keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }";
-  html += ".loader {";
-  html += "  border: 3px solid var(--color-light);";
-  html += "  border-top: 3px solid var(--color-primary);";
-  html += "  border-radius: 50%;";
-  html += "  width: 20px;";
-  html += "  height: 20px;";
-  html += "  animation: spin 1s linear infinite;";
-  html += "  display: inline-block;";
-  html += "}";
-  html += ".toast {";
-  html += "  position: fixed;";
-  html += "  bottom: 20px;";
-  html += "  left: 50%;";
-  html += "  transform: translateX(-50%) translateY(100px);";
-  html += "  background: var(--color-dark);";
-  html += "  color: white;";
-  html += "  padding: 10px 20px;";
-  html += "  border-radius: var(--radius-sm);";
-  html += "  box-shadow: var(--shadow-lg);";
-  html += "  z-index: 999;";
-  html += "  opacity: 0;";
-  html += "  transition: var(--transition);";
-  html += "}";
-  html += ".toast.show {";
-  html += "  opacity: 1;";
-  html += "  transform: translateX(-50%) translateY(0);";
-  html += "}";
-  html += ".footer {";
-  html += "  text-align: center;";
-  html += "  margin-top: 20px;";
-  html += "  font-size: 12px;";
-  html += "  color: var(--color-gray);";
-  html += "}";
-  html += "</style>";
-  html += "</head>";
-  html += "<body>";
+  AsyncResponseStream *response = request->beginResponseStream("text/html");
+  // 使用流式输出（print），避免构建巨大String导致内存耗尽和设备重启
+  #define P(s) response->print(s)
+  P("<!DOCTYPE html><html lang='zh-CN'>");
+  P("<head>");
+  P("<meta charset='UTF-8'>");
+  P("<meta name='viewport' content='width=device-width, initial-scale=1.0, maximum-scale=1.0'>");
+  P("<title>ESP32智能环境监控系统</title>");
+  P("<link rel='stylesheet' href='https://cdn.bootcdn.net/ajax/libs/font-awesome/6.4.0/css/all.min.css'>");
+  P("<style>");
+  P(":root {");
+  P("  --color-primary: #2563eb;");
+  P("  --color-success: #10b981;");
+  P("  --color-warning: #f59e0b;");
+  P("  --color-danger: #ef4444;");
+  P("  --color-info: #3b82f6;");
+  P("  --color-dark: #1f2937;");
+  P("  --color-light: #f3f4f6;");
+  P("  --color-gray: #6b7280;");
+  P("  --shadow-sm: 0 2px 4px rgba(0,0,0,0.05);");
+  P("  --shadow-md: 0 4px 6px rgba(0,0,0,0.1);");
+  P("  --shadow-lg: 0 10px 15px rgba(0,0,0,0.1);");
+  P("  --radius-sm: 6px;");
+  P("  --radius-md: 12px;");
+  P("  --radius-lg: 16px;");
+  P("  --transition: all 0.2s ease;");
+  P("}");
+  P("* { margin: 0; padding: 0; box-sizing: border-box; }");
+  P("body {");
+  P("  font-family: 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;");
+  P("  background: linear-gradient(180deg, #f8fafc 0%, #e2e8f0 100%);");
+  P("  min-height: 100vh;");
+  P("  color: var(--color-dark);");
+  P("  padding-bottom: 20px;");
+  P("}");
+  P(".navbar {");
+  P("  background: white;");
+  P("  box-shadow: var(--shadow-sm);");
+  P("  padding: 15px 20px;");
+  P("  position: sticky;");
+  P("  top: 0;");
+  P("  z-index: 100;");
+  P("  display: flex;");
+  P("  justify-content: space-between;");
+  P("  align-items: center;");
+  P("}");
+  P(".navbar-title {");
+  P("  font-size: 18px;");
+  P("  font-weight: 600;");
+  P("  color: var(--color-primary);");
+  P("}");
+  P(".status-bar {");
+  P("  display: flex;");
+  P("  align-items: center;");
+  P("  gap: 10px;");
+  P("}");
+  P(".status-indicator {");
+  P("  display: flex;");
+  P("  align-items: center;");
+  P("  font-size: 14px;");
+  P("}");
+  P(".status-dot {");
+  P("  width: 10px;");
+  P("  height: 10px;");
+  P("  border-radius: 50%;");
+  P("  margin-right: 5px;");
+  P("  animation: pulse 2s infinite;");
+  P("}");
+  P(".status-online { background: var(--color-success); }");
+  P(".status-offline { background: var(--color-danger); }");
+  P(".mode-switch {");
+  P("  padding: 8px 16px;");
+  P("  border-radius: var(--radius-sm);");
+  P("  border: none;");
+  P("  background: var(--color-primary);");
+  P("  color: white;");
+  P("  font-size: 14px;");
+  P("  cursor: pointer;");
+  P("  transition: var(--transition);");
+  P("}");
+  P(".mode-switch:hover { opacity: 0.9; }");
+  P(".mode-auto { background: var(--color-warning); }");
+  P(".container {");
+  P("  max-width: 1200px;");
+  P("  margin: 20px auto;");
+  P("  padding: 0 20px;");
+  P("}");
+  P(".overview-grid {");
+  P("  display: grid;");
+  P("  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));");
+  P("  gap: 15px;");
+  P("  margin-bottom: 25px;");
+  P("}");
+  P(".card {");
+  P("  background: white;");
+  P("  border-radius: var(--radius-md);");
+  P("  box-shadow: var(--shadow-sm);");
+  P("  padding: 20px;");
+  P("  transition: var(--transition);");
+  P("}");
+  P(".card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }");
+  P(".card-header {");
+  P("  display: flex;");
+  P("  justify-content: space-between;");
+  P("  align-items: center;");
+  P("  margin-bottom: 15px;");
+  P("  padding-bottom: 10px;");
+  P("  border-bottom: 1px solid var(--color-light);");
+  P("}");
+  P(".card-title {");
+  P("  font-size: 16px;");
+  P("  font-weight: 600;");
+  P("  color: var(--color-dark);");
+  P("}");
+  P(".card-icon {");
+  P("  width: 32px;");
+  P("  height: 32px;");
+  P("  border-radius: 50%;");
+  P("  background: var(--color-light);");
+  P("  display: flex;");
+  P("  align-items: center;");
+  P("  justify-content: center;");
+  P("  color: var(--color-primary);");
+  P("}");
+  P(".data-value {");
+  P("  font-size: 24px;");
+  P("  font-weight: 700;");
+  P("  margin-bottom: 10px;");
+  P("}");
+  P(".data-unit { font-size: 14px; color: var(--color-gray); }");
+  P(".data-status {");
+  P("  font-size: 14px;");
+  P("  padding: 3px 8px;");
+  P("  border-radius: 20px;");
+  P("  display: inline-block;");
+  P("  margin-top: 5px;");
+  P("}");
+  P(".status-normal { background: rgba(16, 185, 129, 0.1); color: var(--color-success); }");
+  P(".status-warning { background: rgba(245, 158, 11, 0.1); color: var(--color-warning); }");
+  P(".status-danger { background: rgba(239, 68, 68, 0.1); color: var(--color-danger); }");
+  P(".status-info { background: rgba(59, 130, 246, 0.1); color: var(--color-info); }");
+  P(".progress-container {");
+  P("  width: 100%;");
+  P("  height: 8px;");
+  P("  background: var(--color-light);");
+  P("  border-radius: 4px;");
+  P("  margin: 10px 0;");
+  P("}");
+  P(".progress-bar {");
+  P("  height: 100%;");
+  P("  border-radius: 4px;");
+  P("  transition: width 0.3s ease;");
+  P("}");
+  P(".progress-normal { background: var(--color-success); }");
+  P(".progress-warning { background: var(--color-warning); }");
+  P(".progress-danger { background: var(--color-danger); }");
+  P(".detail-section {");
+  P("  background: white;");
+  P("  border-radius: var(--radius-md);");
+  P("  box-shadow: var(--shadow-sm);");
+  P("  padding: 20px;");
+  P("  margin-bottom: 25px;");
+  P("}");
+  P(".section-title {");
+  P("  font-size: 18px;");
+  P("  font-weight: 600;");
+  P("  margin-bottom: 20px;");
+  P("  color: var(--color-primary);");
+  P("}");
+  P(".detail-grid {");
+  P("  display: grid;");
+  P("  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));");
+  P("  gap: 15px;");
+  P("}");
+  P(".detail-item {");
+  P("  padding: 10px;");
+  P("  border-radius: var(--radius-sm);");
+  P("  background: var(--color-light);");
+  P("}");
+  P(".detail-label { font-size: 14px; color: var(--color-gray); margin-bottom: 5px; }");
+  P(".detail-value { font-size: 16px; font-weight: 600; }");
+  P(".control-section {");
+  P("  background: white;");
+  P("  border-radius: var(--radius-md);");
+  P("  box-shadow: var(--shadow-sm);");
+  P("  padding: 20px;");
+  P("}");
+  P(".control-grid {");
+  P("  display: grid;");
+  P("  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));");
+  P("  gap: 20px;");
+  P("}");
+  P(".control-card {");
+  P("  border: 1px solid var(--color-light);");
+  P("  border-radius: var(--radius-md);");
+  P("  padding: 15px;");
+  P("}");
+  P(".control-device {");
+  P("  display: flex;");
+  P("  justify-content: space-between;");
+  P("  align-items: center;");
+  P("  margin-bottom: 15px;");
+  P("}");
+  P(".device-name {");
+  P("  font-size: 16px;");
+  P("  font-weight: 600;");
+  P("}");
+  P(".toggle-switch {");
+  P("  position: relative;");
+  P("  width: 50px;");
+  P("  height: 26px;");
+  P("  display: inline-block;");
+  P("}");
+  P(".toggle-switch input { opacity: 0; width: 0; height: 0; }");
+  P(".toggle-slider {");
+  P("  position: absolute;");
+  P("  cursor: pointer;");
+  P("  top: 0; left: 0; right: 0; bottom: 0;");
+  P("  background-color: #ccc;");
+  P("  transition: .4s;");
+  P("  border-radius: 34px;");
+  P("}");
+  P(".toggle-slider:before {");
+  P("  position: absolute;");
+  P("  content: \"\";");
+  P("  height: 18px;");
+  P("  width: 18px;");
+  P("  left: 4px;");
+  P("  bottom: 4px;");
+  P("  background-color: white;");
+  P("  transition: .4s;");
+  P("  border-radius: 50%;");
+  P("}");
+  P("input:checked + .toggle-slider { background-color: var(--color-success); }");
+  P("input:checked + .toggle-slider:before { transform: translateX(24px); }");
+  P("input:disabled + .toggle-slider { background-color: #e5e7eb; cursor: not-allowed; }");
+  P("@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }");
+  P("@keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }");
+  P(".loader {");
+  P("  border: 3px solid var(--color-light);");
+  P("  border-top: 3px solid var(--color-primary);");
+  P("  border-radius: 50%;");
+  P("  width: 20px;");
+  P("  height: 20px;");
+  P("  animation: spin 1s linear infinite;");
+  P("  display: inline-block;");
+  P("}");
+  P(".toast {");
+  P("  position: fixed;");
+  P("  bottom: 20px;");
+  P("  left: 50%;");
+  P("  transform: translateX(-50%) translateY(100px);");
+  P("  background: var(--color-dark);");
+  P("  color: white;");
+  P("  padding: 10px 20px;");
+  P("  border-radius: var(--radius-sm);");
+  P("  box-shadow: var(--shadow-lg);");
+  P("  z-index: 999;");
+  P("  opacity: 0;");
+  P("  transition: var(--transition);");
+  P("}");
+  P(".toast.show {");
+  P("  opacity: 1;");
+  P("  transform: translateX(-50%) translateY(0);");
+  P("}");
+  P(".footer {");
+  P("  text-align: center;");
+  P("  margin-top: 20px;");
+  P("  font-size: 12px;");
+  P("  color: var(--color-gray);");
+  P("}");
+  P("</style>");
+  P("</head>");
+  P("<body>");
   
-  html += "<div class='toast' id='toast'></div>";
+  P("<div class='toast' id='toast'></div>");
   
-  html += "<div class='navbar'>";
-  html += "  <div class='navbar-title'>ESP32智能环境监控系统</div>";
-  html += "  <div class='status-bar'>";
-  html += "    <div class='status-indicator'>";
-  html += "      <span class='status-dot status-online' id='connDot'></span>";
-  html += "      <span id='connStatus'>在线</span>";
-  html += "    </div>";
-  html += String("    <button class='mode-switch ") + String(manualControl ? "" : "mode-auto") + "' id='modeBtn'>";
-  html += String("      ") + String(manualControl ? "手动模式" : "自动模式") + "";
-  html += "    </button>";
-  html += "  </div>";
-  html += "</div>";
+  P("<div class='navbar'>");
+  P("  <div class='navbar-title'>ESP32智能环境监控系统</div>");
+  P("  <div class='status-bar'>");
+  P("    <div class='status-indicator'>");
+  P("      <span class='status-dot status-online' id='connDot'></span>");
+  P("      <span id='connStatus'>在线</span>");
+  P("    </div>");
+  P(String("    <button class='mode-switch ") + String(manualControl ? "" : "mode-auto") + "' id='modeBtn'>");
+  P(String("      ") + String(manualControl ? "手动模式" : "自动模式") + "");
+  P("    </button>");
+  P("  </div>");
+  P("</div>");
   
-  html += "<div class='container'>";
+  P("<div class='container'>");
   
-  html += "<div class='overview-grid'>";
+  P("<div class='overview-grid'>");
   
-  html += "<div class='card'>";
-  html += "  <div class='card-header'>";
-  html += "    <div class='card-title'>温湿度</div>";
-  html += "    <div class='card-icon'><i class='fa-solid fa-temperature-half'></i></div>";
-  html += "  </div>";
-  html += String("  <div class='data-value' id='tempValue'>") + String(lastDhtTemp) + "<span class='data-unit'>℃</span></div>";
-  html += "  <div class='progress-container'>";
+  P("<div class='card'>");
+  P("  <div class='card-header'>");
+  P("    <div class='card-title'>温湿度</div>");
+  P("    <div class='card-icon'><i class='fa-solid fa-temperature-half'></i></div>");
+  P("  </div>");
+  P(String("  <div class='data-value' id='tempValue'>") + String(lastDhtTemp) + "<span class='data-unit'>℃</span></div>");
+  P("  <div class='progress-container'>");
   // 修复1：将const char*转换为String
-  html += String("    <div class='progress-bar ") + String(lastDhtTemp > 30 ? "progress-warning" : "progress-normal") + "' id='tempProgress' style='width: " + String(constrain(lastDhtTemp, 0, 50)*2) + "%'></div>";
-  html += "  </div>";
-  html += String("  <div class='data-value' id='humiValue' style='font-size: 18px;'>") + String(lastDhtHumi) + "<span class='data-unit'>%RH</span></div>";
-  html += "  <div class='progress-container'>";
+  P(String("    <div class='progress-bar ") + String(lastDhtTemp > 30 ? "progress-warning" : "progress-normal") + "' id='tempProgress' style='width: " + String(constrain(lastDhtTemp, 0, 50)*2) + "%'></div>");
+  P("  </div>");
+  P(String("  <div class='data-value' id='humiValue' style='font-size: 18px;'>") + String(lastDhtHumi) + "<span class='data-unit'>%RH</span></div>");
+  P("  <div class='progress-container'>");
   // 修复2：将const char*转换为String
-  html += String("    <div class='progress-bar ") + String(lastDhtHumi < 30 || lastDhtHumi > 70 ? "progress-warning" : "progress-normal") + "' id='humiProgress' style='width: " + String(lastDhtHumi) + "%'></div>";
-  html += "  </div>";
+  P(String("    <div class='progress-bar ") + String(lastDhtHumi < 30 || lastDhtHumi > 70 ? "progress-warning" : "progress-normal") + "' id='humiProgress' style='width: " + String(lastDhtHumi) + "%'></div>");
+  P("  </div>");
   // 修复3：将const char*转换为String
-  html += String("  <div class='data-status ") + String(lastDhtStatus == "正常" ? "status-normal" : "status-danger") + "' id='dhtStatus'>";
-  html += String("    ") + lastDhtStatus + "";
-  html += "  </div>";
-  html += "</div>";
+  P(String("  <div class='data-status ") + String(lastDhtStatus == "正常" ? "status-normal" : "status-danger") + "' id='dhtStatus'>");
+  P(String("    ") + lastDhtStatus + "");
+  P("  </div>");
+  P("</div>");
   
-  html += "<div class='card'>";
-  html += "  <div class='card-header'>";
-  html += "    <div class='card-title'>光照强度</div>";
-  html += "    <div class='card-icon'><i class='fa-solid fa-sun'></i></div>";
-  html += "  </div>";
-  html += String("  <div class='data-value' id='lightValue'>") + String(round(lastLightIntensity)) + "<span class='data-unit'>lux</span></div>";
-  html += "  <div class='progress-container'>";
+  P("<div class='card'>");
+  P("  <div class='card-header'>");
+  P("    <div class='card-title'>光照强度</div>");
+  P("    <div class='card-icon'><i class='fa-solid fa-sun'></i></div>");
+  P("  </div>");
+  P(String("  <div class='data-value' id='lightValue'>") + String(round(lastLightIntensity)) + "<span class='data-unit'>lux</span></div>");
+  P("  <div class='progress-container'>");
   // 修复4：将const char*转换为String
-  html += String("    <div class='progress-bar ") + String(lastLightZone == "暗" ? "progress-warning" : "progress-normal") + "' id='lightProgress' style='width: " + String(constrain(round(lastLightIntensity)/LUX_MAX*100, 0, 100)) + "%'></div>";
-  html += "  </div>";
+  P(String("    <div class='progress-bar ") + String(lastLightZone == "暗" ? "progress-warning" : "progress-normal") + "' id='lightProgress' style='width: " + String(constrain(round(lastLightIntensity)/LUX_MAX*100, 0, 100)) + "%'></div>");
+  P("  </div>");
   // 修复5：将const char*转换为String
-  html += String("  <div class='data-status ") + String(lastLightZone == "暗" ? "status-warning" : "status-normal") + "' id='lightZone'>";
-  html += String("    ") + lastLightZone + "";
-  html += "  </div>";
-  html += "</div>";
+  P(String("  <div class='data-status ") + String(lastLightZone == "暗" ? "status-warning" : "status-normal") + "' id='lightZone'>");
+  P(String("    ") + lastLightZone + "");
+  P("  </div>");
+  P("</div>");
   
-  html += "<div class='card'>";
-  html += "  <div class='card-header'>";
-  html += "    <div class='card-title'>土壤湿度</div>";
-  html += "    <div class='card-icon'><i class='fa-solid fa-seedling'></i></div>";
-  html += "  </div>";
-  html += String("  <div class='data-value' id='soilValue'>") + String(lastSoilAO) + "<span class='data-unit'>ADC</span></div>";
-  html += "  <div class='progress-container'>";
-  // 修复6：将const char*转换为String
-  html += String("    <div class='progress-bar ") + String(lastSoilStatus == "正常" ? "progress-normal" : (lastSoilStatus == "轻旱" ? "progress-warning" : "progress-danger")) + "' id='soilProgress' style='width: " + String(constrain(100 - (lastSoilAO - SOIL_OVER_WET_AO)/(SOIL_EXTREME_DROUGHT_AO - SOIL_OVER_WET_AO)*100, 0, 100)) + "%'></div>";
-  html += "  </div>";
-  // 修复7：将const char*转换为String
-  html += String("  <div class='data-status ") + String(lastSoilStatus == "正常" ? "status-normal" : (lastSoilStatus == "轻旱" ? "status-warning" : "status-danger")) + "' id='soilStatus'>";
-  html += String("    ") + lastSoilStatus + "";
-  html += "  </div>";
-  html += "</div>";
-  
-  html += "<div class='card'>";
-  html += "  <div class='card-header'>";
-  html += "    <div class='card-title'>空气质量</div>";
-  html += "    <div class='card-icon'><i class='fa-solid fa-wind'></i></div>";
-  html += "  </div>";
-  if (!sgp30Available) {
-    html += String("  <div class='data-value' style='font-size: 18px;'>eCO₂: <span id='eco2Value'>-") + "</span> ppm</div>";
-    html += String("  <div class='data-value' style='font-size: 18px;'>TVOC: <span id='tvocValue'>-") + "</span> ppb</div>";
-    html += "  <div class='data-status status-danger' id='sgp30Status'>无数据</div>";
-  } else if (millis() - sgp30WarmUpStart < SGP30_WARM_UP_TIME) {
-    html += "  <div class='data-value'>预热中</div>";
-    html += String("  <div class='data-value' style='font-size: 18px;'>eCO₂: <span id='eco2Value'>-") + "</span> ppm</div>";
-    html += String("  <div class='data-value' style='font-size: 18px;'>TVOC: <span id='tvocValue'>-") + "</span> ppb</div>";
-    html += String("  <div class='data-status status-info' id='sgp30Status'>剩余") + String((SGP30_WARM_UP_TIME - (millis() - sgp30WarmUpStart))/1000) + "秒</div>";
+  P("<div class='card'>");
+  P("  <div class='card-header'>");
+  P("    <div class='card-title'>土壤湿度</div>");
+  P("    <div class='card-icon'><i class='fa-solid fa-seedling'></i></div>");
+  P("  </div>");
+
+  // 【修复】根据故障状态显示AO值
+  if (lastSoilAO < 0) {
+    // 故障状态
+    P("  <div class='data-value' id='soilValue' style='color: red;'>传感器故障</div>");
+    P("  <div class='progress-container'>");
+    P("    <div class='progress-bar progress-danger' id='soilProgress' style='width: 0%'></div>");
+    P("  </div>");
+    P("  <div class='data-status status-danger' id='soilStatus'>");
+    P("    检查AO/GND接线");
+    P("  </div>");
   } else {
-    html += String("  <div class='data-value' style='font-size: 18px;'>eCO₂: <span id='eco2Value'>") + String(lastEco2) + "</span> ppm</div>";
-    html += String("  <div class='data-value' style='font-size: 18px;'>TVOC: <span id='tvocValue'>") + String(lastTvoc) + "</span> ppb</div>";
-    html += "  <div class='data-status status-normal' id='sgp30Status'>正常</div>";
+    // 正常状态
+    P(String("  <div class='data-value' id='soilValue'>") + String(lastSoilAO) + "<span class='data-unit'>ADC</span></div>");
+    P("  <div class='progress-container'>");
+    P(String("    <div class='progress-bar ") + String(lastSoilStatus == "正常" ? "progress-normal" : (lastSoilStatus == "轻旱" ? "progress-warning" : "progress-danger")) + "' id='soilProgress' style='width: " + String(constrain(100 - (lastSoilAO - SOIL_OVER_WET_AO)/(SOIL_EXTREME_DROUGHT_AO - SOIL_OVER_WET_AO)*100, 0, 100)) + "%'></div>");
+    P("  </div>");
+    P(String("  <div class='data-status ") + String(lastSoilStatus == "正常" ? "status-normal" : (lastSoilStatus == "轻旱" ? "status-warning" : "status-danger")) + "' id='soilStatus'>");
+    P(String("    ") + lastSoilStatus + "");
+    P("  </div>");
   }
-  html += "</div>";
+  P("</div>");
   
-  html += "</div>";
+  P("<div class='card'>");
+  P("  <div class='card-header'>");
+  P("    <div class='card-title'>空气质量</div>");
+  P("    <div class='card-icon'><i class='fa-solid fa-wind'></i></div>");
+  P("  </div>");
+  if (!sgp30Available) {
+    P(String("  <div class='data-value' style='font-size: 18px;'>eCO₂: <span id='eco2Value'>-") + "</span> ppm</div>");
+    P(String("  <div class='data-value' style='font-size: 18px;'>TVOC: <span id='tvocValue'>-") + "</span> ppb</div>");
+    P("  <div class='data-status status-danger' id='sgp30Status'>无数据</div>");
+  } else if (millis() - sgp30WarmUpStart < SGP30_WARM_UP_TIME) {
+    P("  <div class='data-value'>预热中</div>");
+    P(String("  <div class='data-value' style='font-size: 18px;'>eCO₂: <span id='eco2Value'>-") + "</span> ppm</div>");
+    P(String("  <div class='data-value' style='font-size: 18px;'>TVOC: <span id='tvocValue'>-") + "</span> ppb</div>");
+    P(String("  <div class='data-status status-info' id='sgp30Status'>剩余") + String((SGP30_WARM_UP_TIME - (millis() - sgp30WarmUpStart))/1000) + "秒</div>");
+  } else {
+    P(String("  <div class='data-value' style='font-size: 18px;'>eCO₂: <span id='eco2Value'>") + String(lastEco2) + "</span> ppm</div>");
+    P(String("  <div class='data-value' style='font-size: 18px;'>TVOC: <span id='tvocValue'>") + String(lastTvoc) + "</span> ppb</div>");
+    P("  <div class='data-status status-normal' id='sgp30Status'>正常</div>");
+  }
+  P("</div>");
   
-  html += "<div class='detail-section'>";
-  html += "  <div class='section-title'>详细传感器数据</div>";
-  html += "  <div class='detail-grid'>";
-  html += "    <div class='detail-item'>";
-  html += "      <div class='detail-label'>光照数字输出</div>";
-  html += String("      <div class='detail-value' id='lightDO'>") + String(digitalRead(LIGHT_DO_PIN)) + "</div>";
-  html += "    </div>";
-  html += "    <div class='detail-item'>";
-  html += "      <div class='detail-label'>土壤数字输出</div>";
-  html += String("      <div class='detail-value' id='soilDO'>") + String(digitalRead(SOIL_DO_PIN)) + "</div>";
-  html += "    </div>";
-  html += "    <div class='detail-item'>";
-  html += "      <div class='detail-label'>SGP30状态</div>";
+  P("</div>");
+  
+  P("<div class='detail-section'>");
+  P("  <div class='section-title'>详细传感器数据</div>");
+  P("  <div class='detail-grid'>");
+  P("    <div class='detail-item'>");
+  P("      <div class='detail-label'>光照数字输出</div>");
+  P(String("      <div class='detail-value' id='lightDO'>") + String(digitalRead(LIGHT_DO_PIN)) + "</div>");
+  P("    </div>");
+  P("    <div class='detail-item'>");
+  P("      <div class='detail-label'>土壤数字输出</div>");
+  P(String("      <div class='detail-value' id='soilDO'>") + String(digitalRead(SOIL_DO_PIN)) + "</div>");
+  P("    </div>");
+  P("    <div class='detail-item'>");
+  P("      <div class='detail-label'>SGP30状态</div>");
   // 修复8：将const char*转换为String
-  html += String("      <div class='detail-value' id='sgp30Detail'>") + String(sgp30Available ? (millis() - sgp30WarmUpStart < SGP30_WARM_UP_TIME ? "预热中" : "正常") : "未连接") + "</div>";
-  html += "    </div>";
-  html += "    <div class='detail-item'>";
-  html += "      <div class='detail-label'>系统运行模式</div>";
-  html += String("      <div class='detail-value' id='modeDetail'>") + String(manualControl ? "手动控制" : "自动控制") + "</div>";
-  html += "    </div>";
-  html += "  </div>";
-  html += "</div>";
+  P(String("      <div class='detail-value' id='sgp30Detail'>") + String(sgp30Available ? (millis() - sgp30WarmUpStart < SGP30_WARM_UP_TIME ? "预热中" : "正常") : "未连接") + "</div>");
+  P("    </div>");
+  P("    <div class='detail-item'>");
+  P("      <div class='detail-label'>系统运行模式</div>");
+  P(String("      <div class='detail-value' id='modeDetail'>") + String(manualControl ? "手动控制" : "自动控制") + "</div>");
+  P("    </div>");
+  P("  </div>");
+  P("</div>");
   
-  html += "<div class='control-section'>";
-  html += "  <div class='section-title'>设备控制中心</div>";
-  html += "  <div class='control-grid'>";
+  P("<div class='control-section'>");
+  P("  <div class='section-title'>设备控制中心</div>");
+  P("  <div class='control-grid'>");
   
-  html += "  <div class='control-card'>";
-  html += "    <div class='control-device'>";
-  html += "      <div class='device-name'>水泵</div>";
-  html += "      <label class='toggle-switch'>";
+  P("  <div class='control-card'>");
+  P("    <div class='control-device'>");
+  P("      <div class='device-name'>水泵</div>");
+  P("      <label class='toggle-switch'>");
   // 修复9：将const char*转换为String
-  html += String("        <input type='checkbox' id='pumpToggle' ") + String(manualControl ? "" : "disabled") + " " + String(pumpState ? "checked" : "") + ">";
-  html += "        <span class='toggle-slider'></span>";
-  html += "      </label>";
-  html += "    </div>";
+  P(String("        <input type='checkbox' id='pumpToggle' ") + String(manualControl ? "" : "disabled") + " " + String(pumpState ? "checked" : "") + ">");
+  P("        <span class='toggle-slider'></span>");
+  P("      </label>");
+  P("    </div>");
   // 修复10：将const char*转换为String
-  html += String("    <div class='detail-label'>当前状态: <span id='pumpState' class='") + String(pumpState ? "status-normal" : "status-danger") + "'>" + String(pumpState ? "开启" : "关闭") + "</span></div>";
-  html += "  </div>";
+  P(String("    <div class='detail-label'>当前状态: <span id='pumpState' class='") + String(pumpState ? "status-normal" : "status-danger") + "'>" + String(pumpState ? "开启" : "关闭") + "</span></div>");
+  P("  </div>");
   
-  html += "  <div class='control-card'>";
-  html += "    <div class='control-device'>";
-  html += "      <div class='device-name'>风扇</div>";
-  html += "      <label class='toggle-switch'>";
+  P("  <div class='control-card'>");
+  P("    <div class='control-device'>");
+  P("      <div class='device-name'>风扇</div>");
+  P("      <label class='toggle-switch'>");
   // 修复11：将const char*转换为String
-  html += String("        <input type='checkbox' id='fanToggle' ") + String(manualControl ? "" : "disabled") + " " + String(fanState ? "checked" : "") + ">";
-  html += "        <span class='toggle-slider'></span>";
-  html += "      </label>";
-  html += "    </div>";
+  P(String("        <input type='checkbox' id='fanToggle' ") + String(manualControl ? "" : "disabled") + " " + String(fanState ? "checked" : "") + ">");
+  P("        <span class='toggle-slider'></span>");
+  P("      </label>");
+  P("    </div>");
   // 修复12：将const char*转换为String
-  html += String("    <div class='detail-label'>当前状态: <span id='fanState' class='") + String(fanState ? "status-normal" : "status-danger") + "'>" + String(fanState ? "开启" : "关闭") + "</span></div>";
-  html += "  </div>";
+  P(String("    <div class='detail-label'>当前状态: <span id='fanState' class='") + String(fanState ? "status-normal" : "status-danger") + "'>" + String(fanState ? "开启" : "关闭") + "</span></div>");
+  P("  </div>");
   
-  html += "  <div class='control-card'>";
-  html += "    <div class='control-device'>";
-  html += "      <div class='device-name'>照明灯</div>";
-  html += "      <label class='toggle-switch'>";
+  P("  <div class='control-card'>");
+  P("    <div class='control-device'>");
+  P("      <div class='device-name'>照明灯</div>");
+  P("      <label class='toggle-switch'>");
   // 修复13：将const char*转换为String
-  html += String("        <input type='checkbox' id='lightToggle' ") + String(manualControl ? "" : "disabled") + " " + String(lightState ? "checked" : "") + ">";
-  html += "        <span class='toggle-slider'></span>";
-  html += "      </label>";
-  html += "    </div>";
+  P(String("        <input type='checkbox' id='lightToggle' ") + String(manualControl ? "" : "disabled") + " " + String(lightState ? "checked" : "") + ">");
+  P("        <span class='toggle-slider'></span>");
+  P("      </label>");
+  P("    </div>");
   // 修复14：将const char*转换为String
-  html += String("    <div class='detail-label'>当前状态: <span id='lightState' class='") + String(lightState ? "status-normal" : "status-danger") + "'>" + String(lightState ? "开启" : "关闭") + "</span></div>";
-  html += "  </div>";
+  P(String("    <div class='detail-label'>当前状态: <span id='lightState' class='") + String(lightState ? "status-normal" : "status-danger") + "'>" + String(lightState ? "开启" : "关闭") + "</span></div>");
+  P("  </div>");
   
-  html += "  </div>";
-  html += "</div>";
+  P("  </div>");
+  P("</div>");
 
   // ==============================================================================
   // 阈值设置区域
   // ==============================================================================
-  html += "<div class='control-section' style='margin-top: 25px;'>";
-  html += "  <div class='section-title'>自动控制阈值设置</div>";
-  html += "  <div class='threshold-grid' style='display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;'>";
+  P("<div class='control-section' style='margin-top: 25px;'>");
+  P("  <div class='section-title'>自动控制阈值设置</div>");
+  P("  <div class='threshold-grid' style='display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;'>");
   
   // 风扇阈值设置
-  html += "  <div class='control-card'>";
-  html += "    <div class='device-name' style='margin-bottom: 15px;'><i class='fa-solid fa-fan' style='margin-right: 8px;'></i>风扇启动阈值</div>";
-  html += "    <div class='threshold-item' style='margin-bottom: 12px;'>";
-  html += "      <label class='detail-label'>温度阈值 (℃): 超过此值开启</label>";
-  html += String("      <input type='number' id='fanTempThreshold' value='") + String(fanTempThreshold) + "' min='20' max='50' style='width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;'>";
-  html += "    </div>";
-  html += "    <div class='threshold-item'>";
-  html += "      <label class='detail-label'>CO₂阈值 (ppm): 超过此值开启</label>";
-  html += String("      <input type='number' id='fanCO2Threshold' value='") + String(fanCO2Threshold) + "' min='400' max='5000' style='width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;'>";
-  html += "    </div>";
-  html += "  </div>";
+  P("  <div class='control-card'>");
+  P("    <div class='device-name' style='margin-bottom: 15px;'><i class='fa-solid fa-fan' style='margin-right: 8px;'></i>风扇启动阈值</div>");
+  P("    <div class='threshold-item' style='margin-bottom: 12px;'>");
+  P("      <label class='detail-label'>温度阈值 (℃): 超过此值开启</label>");
+  P(String("      <input type='number' id='fanTempThreshold' value='") + String(fanTempThreshold) + "' min='20' max='50' style='width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;'>");
+  P("    </div>");
+  P("    <div class='threshold-item'>");
+  P("      <label class='detail-label'>CO₂阈值 (ppm): 超过此值开启</label>");
+  P(String("      <input type='number' id='fanCO2Threshold' value='") + String(fanCO2Threshold) + "' min='400' max='5000' style='width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;'>");
+  P("    </div>");
+  P("  </div>");
   
   // 水泵阈值设置
-  html += "  <div class='control-card'>";
-  html += "    <div class='device-name' style='margin-bottom: 15px;'><i class='fa-solid fa-droplet' style='margin-right: 8px;'></i>水泵启动阈值</div>";
-  html += "    <div class='threshold-item'>";
-  html += "      <label class='detail-label'>土壤干旱阈值 (ADC值): 超过此值开启水泵</label>";
-  html += String("      <input type='number' id='pumpDroughtThreshold' value='") + String(pumpDroughtThreshold) + "' min='0' max='5000' style='width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;'>";
-  html += "      <div class='detail-label' style='margin-top: 5px; font-size: 12px; color: #888;'>ADC范围0-4095，值越大越干。参考: 过湿≤2200, 正常2200-2800, 轻旱2800-3200, 中旱3200-3500, 重旱>3500</div>";
-  html += "    </div>";
-  html += "  </div>";
+  P("  <div class='control-card'>");
+  P("    <div class='device-name' style='margin-bottom: 15px;'><i class='fa-solid fa-droplet' style='margin-right: 8px;'></i>水泵启动阈值</div>");
+  P("    <div class='threshold-item'>");
+  P("      <label class='detail-label'>土壤干旱阈值 (ADC值): 超过此值开启水泵</label>");
+  P(String("      <input type='number' id='pumpDroughtThreshold' value='") + String(pumpDroughtThreshold) + "' min='0' max='5000' style='width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;'>");
+  P("      <div class='detail-label' style='margin-top: 5px; font-size: 12px; color: #888;'>ADC范围0-4095，值越大越干。参考: 过湿≤2200, 正常2200-2800, 轻旱2800-3200, 中旱3200-3500, 重旱>3500</div>");
+  P("    </div>");
+  P("  </div>");
   
   // 灯泡阈值设置（使用光照强度lux，更直观）
-  html += "  <div class='control-card'>";
-  html += "    <div class='device-name' style='margin-bottom: 15px;'><i class='fa-solid fa-lightbulb' style='margin-right: 8px;'></i>灯泡启动阈值</div>";
-  html += "    <div class='threshold-item'>";
-  html += "      <label class='detail-label'>光照强度阈值 (lux): 低于此值开启灯</label>";
-  html += String("      <input type='number' id='lightLuxThreshold' value='") + String(lightLuxThreshold) + "' min='50' max='5000' style='width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;'>";
-  html += "      <div class='detail-label' style='margin-top: 5px; font-size: 12px; color: #888;'>参考: 暗<800lux, 偏暗800-1000, 正常1000-3000, 明亮>3000</div>";
-  html += "    </div>";
-  html += "  </div>";
+  P("  <div class='control-card'>");
+  P("    <div class='device-name' style='margin-bottom: 15px;'><i class='fa-solid fa-lightbulb' style='margin-right: 8px;'></i>灯泡启动阈值</div>");
+  P("    <div class='threshold-item'>");
+  P("      <label class='detail-label'>光照强度阈值 (lux): 低于此值开启灯</label>");
+  P(String("      <input type='number' id='lightLuxThreshold' value='") + String(lightLuxThreshold) + "' min='50' max='5000' style='width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;'>");
+  P("      <div class='detail-label' style='margin-top: 5px; font-size: 12px; color: #888;'>参考: 暗<800lux, 偏暗800-1000, 正常1000-3000, 明亮>3000</div>");
+  P("    </div>");
+  P("  </div>");
   
-  html += "  </div>";
+  P("  </div>");
   
   // 保存按钮
-  html += "  <div style='text-align: center; margin-top: 20px;'>";
-  html += "    <button id='saveThresholdsBtn' style='padding: 12px 40px; background: var(--color-primary); color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; transition: var(--transition);'>保存阈值设置</button>";
-  html += "  </div>";
-  html += "</div>";
+  P("  <div style='text-align: center; margin-top: 20px;'>");
+  P("    <button id='saveThresholdsBtn' style='padding: 12px 40px; background: var(--color-primary); color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; transition: var(--transition);'>保存阈值设置</button>");
+  P("  </div>");
+  P("</div>");
   
-  html += "</div>";
+  P("</div>");
   
-  html += "<div class='footer'>";
+  P("<div class='footer'>");
   time_t now = time(nullptr);
   struct tm* timeinfo = localtime(&now);
-  html += String("  <p>最后更新时间: <span id='lastUpdate'>") +
+  P(String("  <p>最后更新时间: <span id='lastUpdate'>") +
     String(timeinfo->tm_year + 1900) + "年" +
     String(timeinfo->tm_mon + 1) + "月" +
     String(timeinfo->tm_mday) + "日 " +
     String(timeinfo->tm_hour) + ":" +
     String(timeinfo->tm_min) + ":" +
-    String(timeinfo->tm_sec) + "</span></p>";
-  html += "  <p>ESP32智能监控系统 © 2025</p>";
-  html += "</div>";
+    String(timeinfo->tm_sec) + "</span></p>");
+  P("  <p>ESP32智能监控系统 © 2025</p>");
+  P("</div>");
   
-  html += "<script>";
-  html += "let refreshIntervalId;";
-  html += "let isRefreshing = false;";
-  html += String("let currentManualMode = ") + String(manualControl ? "true" : "false") + ";";
-  html += "const toast = document.getElementById('toast');";
+  P("<script>");
+  P("let refreshIntervalId;");
+  P("let isRefreshing = false;");
+  P(String("let currentManualMode = ") + String(manualControl ? "true" : "false") + ";");
+  P("const toast = document.getElementById('toast');");
   
-  html += "function showToast(message, duration = 2000) {";
-  html += "  toast.textContent = message;";
-  html += "  toast.classList.add('show');";
-  html += "  setTimeout(() => {";
-  html += "    toast.classList.remove('show');";
-  html += "  }, duration);";
-  html += "}";
+  P("function showToast(message, duration = 2000) {");
+  P("  toast.textContent = message;");
+  P("  toast.classList.add('show');");
+  P("  setTimeout(() => {");
+  P("    toast.classList.remove('show');");
+  P("  }, duration);");
+  P("}");
   
-  html += "window.addEventListener('DOMContentLoaded', function() {";
-  html += "  startAutoRefresh();";
-  html += "  document.getElementById('modeBtn').addEventListener('click', switchMode);";
-  html += "  document.getElementById('pumpToggle').addEventListener('change', (e) => controlDevice('pump', e.target.checked ? 1 : 0));";
-  html += "  document.getElementById('fanToggle').addEventListener('change', (e) => controlDevice('fan', e.target.checked ? 1 : 0));";
-  html += "  document.getElementById('lightToggle').addEventListener('change', (e) => controlDevice('light', e.target.checked ? 1 : 0));";
-  html += "  document.getElementById('saveThresholdsBtn').addEventListener('click', saveThresholds);";
-  html += "  loadThresholds();";
-  html += "});";
+  P("window.addEventListener('DOMContentLoaded', function() {");
+  P("  startAutoRefresh();");
+  P("  document.getElementById('modeBtn').addEventListener('click', switchMode);");
+  P("  document.getElementById('pumpToggle').addEventListener('change', (e) => controlDevice('pump', e.target.checked ? 1 : 0));");
+  P("  document.getElementById('fanToggle').addEventListener('change', (e) => controlDevice('fan', e.target.checked ? 1 : 0));");
+  P("  document.getElementById('lightToggle').addEventListener('change', (e) => controlDevice('light', e.target.checked ? 1 : 0));");
+  P("  document.getElementById('saveThresholdsBtn').addEventListener('click', saveThresholds);");
+  P("  document.addEventListener('visibilitychange', () => {");
+  P("    if (document.hidden) {");
+  P("      if (refreshIntervalId) clearInterval(refreshIntervalId);");
+  P("    } else {");
+  P("      startAutoRefresh();");
+  P("    }");
+  P("  });");
+  P("  loadThresholds();");
+  P("});");
   
-  html += "function startAutoRefresh() {";
-  html += "  if (refreshIntervalId) clearInterval(refreshIntervalId);";
-  html += "  autoRefreshData();";
-  html += "  refreshIntervalId = setInterval(autoRefreshData, 1000);";
-  html += "}";
+  P("function startAutoRefresh() {");
+  P("  if (refreshIntervalId) clearInterval(refreshIntervalId);");
+  P("  autoRefreshData();");
+  P("  refreshIntervalId = setInterval(autoRefreshData, 3000);");
+  P("}");
   
-  html += "function autoRefreshData() {";
-  html += "  if (isRefreshing) return;";
-  html += "  isRefreshing = true;";
+  P("function autoRefreshData() {");
+  P("  if (document.hidden || isRefreshing) return;");
+  P("  isRefreshing = true;");
   // 不显示刷新中，只显示在线与离线
-  html += "  fetch('/data?rand=' + Math.random(), {cache: 'no-store'})";
-  html += "  .then(response => {";
-  html += "    if (!response.ok) throw new Error('网络错误');";
-  html += "    return response.json();";
-  html += "  })";
-  html += "  .then(data => {";
-  html += "    updatePageUI(data);";
-  html += "    currentManualMode = data.manualControl;";
-  html += "    document.getElementById('connStatus').textContent = '在线';";
-  html += "    document.getElementById('connDot').className = 'status-dot status-online';";
-  html += "  })";
-  html += "  .catch(error => {";
-  html += "    console.error('刷新失败:', error);";
-  html += "    document.getElementById('connStatus').textContent = '离线';";
-  html += "    document.getElementById('connDot').className = 'status-dot status-offline';";
-  html += "    showToast('数据刷新失败，请检查连接', 3000);";
-  html += "  })";
-  html += "  .finally(() => {";
-  html += "    isRefreshing = false;";
-  html += "  });";
-  html += "}";
+  P("  fetch('/data?rand=' + Math.random(), {cache: 'no-store'})");
+  P("  .then(response => {");
+  P("    if (!response.ok) throw new Error('网络错误');");
+  P("    return response.json();");
+  P("  })");
+  P("  .then(data => {");
+  P("    updatePageUI(data);");
+  P("    currentManualMode = data.manualControl;");
+  P("    document.getElementById('connStatus').textContent = '在线';");
+  P("    document.getElementById('connDot').className = 'status-dot status-online';");
+  P("  })");
+  P("  .catch(error => {");
+  P("    console.error('刷新失败:', error);");
+  P("    document.getElementById('connStatus').textContent = '离线';");
+  P("    document.getElementById('connDot').className = 'status-dot status-offline';");
+  P("    showToast('数据刷新失败，请检查连接', 3000);");
+  P("  })");
+  P("  .finally(() => {");
+  P("    isRefreshing = false;");
+  P("  });");
+  P("}");
   
-  html += "function updatePageUI(data) {";
-    html += "  currentManualMode = data.manualControl;";
-  html += "  document.getElementById('tempValue').innerHTML = data.dhtTemp + ' <span class=\"data-unit\">℃</span>';";
-  html += "  document.getElementById('humiValue').innerHTML = data.dhtHumi + ' <span class=\"data-unit\">%RH</span>';";
-  html += "  document.getElementById('dhtStatus').textContent = data.dhtStatus;";
-  html += "  document.getElementById('dhtStatus').className = 'data-status ' + (data.dhtStatus === '正常' ? 'status-normal' : 'status-danger');";
-  html += "  const tempProgress = Math.min(Math.max(data.dhtTemp * 2, 0), 100);";
-  html += "  document.getElementById('tempProgress').style.width = tempProgress + '%';";
-  html += "  document.getElementById('tempProgress').className = 'progress-bar ' + (data.dhtTemp > 30 ? 'progress-warning' : 'progress-normal');";
-  html += "  document.getElementById('humiProgress').style.width = data.dhtHumi + '%';";
-  html += "  document.getElementById('humiProgress').className = 'progress-bar ' + (data.dhtHumi < 30 || data.dhtHumi > 70 ? 'progress-warning' : 'progress-normal');";
+  P("function updatePageUI(data) {");
+    P("  currentManualMode = data.manualControl;");
+  P("  document.getElementById('tempValue').innerHTML = data.dhtTemp + ' <span class=\"data-unit\">℃</span>';");
+  P("  document.getElementById('humiValue').innerHTML = data.dhtHumi + ' <span class=\"data-unit\">%RH</span>';");
+  P("  document.getElementById('dhtStatus').textContent = data.dhtStatus;");
+  P("  document.getElementById('dhtStatus').className = 'data-status ' + (data.dhtStatus === '正常' ? 'status-normal' : 'status-danger');");
+  P("  const tempProgress = Math.min(Math.max(data.dhtTemp * 2, 0), 100);");
+  P("  document.getElementById('tempProgress').style.width = tempProgress + '%';");
+  P("  document.getElementById('tempProgress').className = 'progress-bar ' + (data.dhtTemp > 30 ? 'progress-warning' : 'progress-normal');");
+  P("  document.getElementById('humiProgress').style.width = data.dhtHumi + '%';");
+  P("  document.getElementById('humiProgress').className = 'progress-bar ' + (data.dhtHumi < 30 || data.dhtHumi > 70 ? 'progress-warning' : 'progress-normal');");
   
-  html += "  document.getElementById('lightValue').innerHTML = data.lightIntensity + ' <span class=\"data-unit\">lux</span>';";
-  html += "  document.getElementById('lightZone').textContent = data.lightZone;";
-  html += "  document.getElementById('lightZone').className = 'data-status ' + (data.lightZone === '暗' ? 'status-warning' : 'status-normal');";
+  P("  document.getElementById('lightValue').innerHTML = data.lightIntensity + ' <span class=\"data-unit\">lux</span>';");
+  P("  document.getElementById('lightZone').textContent = data.lightZone;");
+  P("  document.getElementById('lightZone').className = 'data-status ' + (data.lightZone === '暗' ? 'status-warning' : 'status-normal');");
   // 【优化】使用后端计算的lightProgress，避免前端硬编码LUX_MAX
-  html += "  document.getElementById('lightProgress').style.width = data.lightProgress + '%';";
-  html += "  document.getElementById('lightProgress').className = 'progress-bar ' + (data.lightZone === '暗' ? 'progress-warning' : 'progress-normal');";
+  P("  document.getElementById('lightProgress').style.width = data.lightProgress + '%';");
+  P("  document.getElementById('lightProgress').className = 'progress-bar ' + (data.lightZone === '暗' ? 'progress-warning' : 'progress-normal');");
   
-  html += "  document.getElementById('soilValue').innerHTML = data.soilAO + ' <span class=\"data-unit\">ADC</span>';";
-  html += "  document.getElementById('soilStatus').textContent = data.soilStatus;";
-  html += "  document.getElementById('soilStatus').className = 'data-status ' + (data.soilStatus === '正常' ? 'status-normal' : (data.soilStatus === '轻旱' ? 'status-warning' : 'status-danger'));";
-  html += String("  const soilProgress = Math.min(Math.max(100 - (data.soilAO - ") + String(SOIL_OVER_WET_AO) + ")/(" + String(SOIL_EXTREME_DROUGHT_AO - SOIL_OVER_WET_AO) + ")*100, 0), 100);";
-  html += "  document.getElementById('soilProgress').style.width = soilProgress + '%';";
-  html += "  document.getElementById('soilProgress').className = 'progress-bar ' + (data.soilStatus === '正常' ? 'progress-normal' : (data.soilStatus === '轻旱' ? 'progress-warning' : 'progress-danger'));";
+  P("  document.getElementById('soilValue').innerHTML = data.soilAO + ' <span class=\"data-unit\">ADC</span>';");
+  P("  document.getElementById('soilStatus').textContent = data.soilStatus;");
+  P("  document.getElementById('soilStatus').className = 'data-status ' + (data.soilStatus === '正常' ? 'status-normal' : (data.soilStatus === '轻旱' ? 'status-warning' : 'status-danger'));");
+  P(String("  const soilProgress = Math.min(Math.max(100 - (data.soilAO - ") + String(SOIL_OVER_WET_AO) + ")/(" + String(SOIL_EXTREME_DROUGHT_AO - SOIL_OVER_WET_AO) + ")*100, 0), 100);");
+  P("  document.getElementById('soilProgress').style.width = soilProgress + '%';");
+  P("  document.getElementById('soilProgress').className = 'progress-bar ' + (data.soilStatus === '正常' ? 'progress-normal' : (data.soilStatus === '轻旱' ? 'progress-warning' : 'progress-danger'));");
   
-  html += "  if (data.sgp30Status === '无数据') {";
-  html += "    document.getElementById('eco2Value').textContent = '-';";
-  html += "    document.getElementById('tvocValue').textContent = '-';";
-  html += "    document.getElementById('sgp30Status').textContent = '无数据';";
-  html += "    document.getElementById('sgp30Status').className = 'data-status status-danger';";
-  html += "    document.getElementById('sgp30Detail').textContent = '未连接';";
-  html += "  } else if (data.sgp30Status.includes('预热')) {";
-  html += "    document.getElementById('eco2Value').textContent = '-';";
-  html += "    document.getElementById('tvocValue').textContent = '-';";
-  html += "    document.getElementById('sgp30Status').textContent = data.sgp30Status;";
-  html += "    document.getElementById('sgp30Status').className = 'data-status status-info';";
-  html += "    document.getElementById('sgp30Detail').textContent = '预热中';";
-  html += "  } else {";
-  html += "    document.getElementById('eco2Value').textContent = data.eco2;";
-  html += "    document.getElementById('tvocValue').textContent = data.tvoc;";
-  html += "    document.getElementById('sgp30Status').textContent = '正常';";
-  html += "    document.getElementById('sgp30Status').className = 'data-status status-normal';";
-  html += "    document.getElementById('sgp30Detail').textContent = '正常';";
-  html += "  }";
+  P("  if (data.sgp30Status === '无数据') {");
+  P("    document.getElementById('eco2Value').textContent = '-';");
+  P("    document.getElementById('tvocValue').textContent = '-';");
+  P("    document.getElementById('sgp30Status').textContent = '无数据';");
+  P("    document.getElementById('sgp30Status').className = 'data-status status-danger';");
+  P("    document.getElementById('sgp30Detail').textContent = '未连接';");
+  P("  } else if (data.sgp30Status.includes('预热')) {");
+  P("    document.getElementById('eco2Value').textContent = '-';");
+  P("    document.getElementById('tvocValue').textContent = '-';");
+  P("    document.getElementById('sgp30Status').textContent = data.sgp30Status;");
+  P("    document.getElementById('sgp30Status').className = 'data-status status-info';");
+  P("    document.getElementById('sgp30Detail').textContent = '预热中';");
+  P("  } else {");
+  P("    document.getElementById('eco2Value').textContent = data.eco2;");
+  P("    document.getElementById('tvocValue').textContent = data.tvoc;");
+  P("    document.getElementById('sgp30Status').textContent = '正常';");
+  P("    document.getElementById('sgp30Status').className = 'data-status status-normal';");
+  P("    document.getElementById('sgp30Detail').textContent = '正常';");
+  P("  }");
   
-  html += "  document.getElementById('lightDO').textContent = data.lightDO;";
-  html += "  document.getElementById('soilDO').textContent = data.soilDO;";
+  P("  document.getElementById('lightDO').textContent = data.lightDO;");
+  P("  document.getElementById('soilDO').textContent = data.soilDO;");
   
-  html += "  document.getElementById('pumpState').textContent = data.pumpState ? '开启' : '关闭';";
-  html += "  document.getElementById('pumpState').className = data.pumpState ? 'status-normal' : 'status-danger';";
-  html += "  document.getElementById('fanState').textContent = data.fanState ? '开启' : '关闭';";
-  html += "  document.getElementById('fanState').className = data.fanState ? 'status-normal' : 'status-danger';";
-  html += "  document.getElementById('lightState').textContent = data.lightState ? '开启' : '关闭';";
-  html += "  document.getElementById('lightState').className = data.lightState ? 'status-normal' : 'status-danger';";
+  P("  document.getElementById('pumpState').textContent = data.pumpState ? '开启' : '关闭';");
+  P("  document.getElementById('pumpState').className = data.pumpState ? 'status-normal' : 'status-danger';");
+  P("  document.getElementById('fanState').textContent = data.fanState ? '开启' : '关闭';");
+  P("  document.getElementById('fanState').className = data.fanState ? 'status-normal' : 'status-danger';");
+  P("  document.getElementById('lightState').textContent = data.lightState ? '开启' : '关闭';");
+  P("  document.getElementById('lightState').className = data.lightState ? 'status-normal' : 'status-danger';");
   
-  html += "  document.getElementById('modeBtn').textContent = data.manualControl ? '手动模式' : '自动模式';";
-  html += "  document.getElementById('modeBtn').className = 'mode-switch ' + (data.manualControl ? '' : 'mode-auto');";
-  html += "  document.getElementById('modeDetail').textContent = data.manualControl ? '手动控制' : '自动控制';";
+  P("  document.getElementById('modeBtn').textContent = data.manualControl ? '手动模式' : '自动模式';");
+  P("  document.getElementById('modeBtn').className = 'mode-switch ' + (data.manualControl ? '' : 'mode-auto');");
+  P("  document.getElementById('modeDetail').textContent = data.manualControl ? '手动控制' : '自动控制';");
   
-  html += "  document.getElementById('pumpToggle').checked = data.pumpState;";
-  html += "  document.getElementById('fanToggle').checked = data.fanState;";
-  html += "  document.getElementById('lightToggle').checked = data.lightState;";
-  html += "  document.getElementById('pumpToggle').disabled = !data.manualControl;";
-  html += "  document.getElementById('fanToggle').disabled = !data.manualControl;";
-  html += "  document.getElementById('lightToggle').disabled = !data.manualControl;";
+  P("  document.getElementById('pumpToggle').checked = data.pumpState;");
+  P("  document.getElementById('fanToggle').checked = data.fanState;");
+  P("  document.getElementById('lightToggle').checked = data.lightState;");
+  P("  document.getElementById('pumpToggle').disabled = !data.manualControl;");
+  P("  document.getElementById('fanToggle').disabled = !data.manualControl;");
+  P("  document.getElementById('lightToggle').disabled = !data.manualControl;");
   
-  html += "  if (data.lastUpdate) { document.getElementById('lastUpdate').textContent = data.lastUpdate; }";
-  html += "}";
+  P("  if (data.lastUpdate) { document.getElementById('lastUpdate').textContent = data.lastUpdate; }");
+  P("}");
   
-  html += "function switchMode() {";
-  html += "  if (isRefreshing) return;";
-  html += "  fetch('/mode?state=' + (currentManualMode ? '0' : '1'))";
-  html += "  .then(response => response.text())";
-  html += "  .then(() => {";
-  html += "    const newMode = !currentManualMode;";
-  html += "    showToast('已切换到' + (newMode ? '手动模式' : '自动模式'));";
-  html += "    autoRefreshData();";
-  html += "  })";
-  html += "  .catch(error => {";
-  html += "    console.error('模式切换失败:', error);";
-  html += "    showToast('模式切换失败，请重试', 3000);";
-  html += "  });";
-  html += "}";
+  P("function switchMode() {");
+  P("  if (isRefreshing) return;");
+  P("  fetch('/mode?state=' + (currentManualMode ? '0' : '1'))");
+  P("  .then(response => response.text())");
+  P("  .then(() => {");
+  P("    const newMode = !currentManualMode;");
+  P("    showToast('已切换到' + (newMode ? '手动模式' : '自动模式'));");
+  P("    autoRefreshData();");
+  P("  })");
+  P("  .catch(error => {");
+  P("    console.error('模式切换失败:', error);");
+  P("    showToast('模式切换失败，请重试', 3000);");
+  P("  });");
+  P("}");
   
-  html += "function controlDevice(device, state) {";
-  html += "  if (!currentManualMode) return;";
-  html += "  if (refreshIntervalId) clearInterval(refreshIntervalId);";
-  html += "  const url = '/' + device + '?state=' + state + '&ts=' + Date.now();";
-  html += "  fetch(url, { cache: 'no-store' })";
-  html += "  .then(response => response.text())";
-  html += "  .then(() => {";
-  html += "    const deviceName = device === 'pump' ? '水泵' : device === 'fan' ? '风扇' : '照明灯';";
-  html += "    showToast(deviceName + (state === 1 ? '已开启' : '已关闭'));";
-  html += "    isRefreshing = false;";
-  html += "    autoRefreshData();";
-  html += "  })";
-  html += "  .catch(error => {";
-  html += "    console.error(device + '控制失败:', error);";
-  html += "    showToast('设备控制失败，请重试', 3000);";
-  html += "    isRefreshing = false;";
-  html += "    autoRefreshData();";
-  html += "  })";
-  html += "  .finally(() => {";
-  html += "    startAutoRefresh();";
-  html += "  });";
-  html += "}";
+  P("function controlDevice(device, state) {");
+  P("  if (!currentManualMode) return;");
+  P("  if (refreshIntervalId) clearInterval(refreshIntervalId);");
+  P("  const url = '/' + device + '?state=' + state + '&ts=' + Date.now();");
+  P("  fetch(url, { cache: 'no-store' })");
+  P("  .then(response => response.text())");
+  P("  .then(() => {");
+  P("    const deviceName = device === 'pump' ? '水泵' : device === 'fan' ? '风扇' : '照明灯';");
+  P("    showToast(deviceName + (state === 1 ? '已开启' : '已关闭'));");
+  P("    isRefreshing = false;");
+  P("    autoRefreshData();");
+  P("  })");
+  P("  .catch(error => {");
+  P("    console.error(device + '控制失败:', error);");
+  P("    showToast('设备控制失败，请重试', 3000);");
+  P("    isRefreshing = false;");
+  P("    autoRefreshData();");
+  P("  })");
+  P("  .finally(() => {");
+  P("    startAutoRefresh();");
+  P("  });");
+  P("}");
   
   // 阈值设置相关函数
-  html += "function loadThresholds() {";
-  html += "  fetch('/getThresholds')";
-  html += "  .then(response => response.json())";
-  html += "  .then(data => {";
-  html += "    document.getElementById('fanTempThreshold').value = data.fanTempThreshold;";
-  html += "    document.getElementById('fanCO2Threshold').value = data.fanCO2Threshold;";
-  html += "    document.getElementById('pumpDroughtThreshold').value = data.pumpDroughtThreshold;";
-  html += "    document.getElementById('lightLuxThreshold').value = data.lightLuxThreshold;";
-  html += "  })";
-  html += "  .catch(error => console.error('加载阈值失败:', error));";
-  html += "}";
+  P("function loadThresholds() {");
+  P("  fetch('/getThresholds')");
+  P("  .then(response => response.json())");
+  P("  .then(data => {");
+  P("    document.getElementById('fanTempThreshold').value = data.fanTempThreshold;");
+  P("    document.getElementById('fanCO2Threshold').value = data.fanCO2Threshold;");
+  P("    document.getElementById('pumpDroughtThreshold').value = data.pumpDroughtThreshold;");
+  P("    document.getElementById('lightLuxThreshold').value = data.lightLuxThreshold;");
+  P("  })");
+  P("  .catch(error => console.error('加载阈值失败:', error));");
+  P("}");
   
-  html += "function saveThresholds() {";
-  html += "  const fanTemp = document.getElementById('fanTempThreshold').value;";
-  html += "  const fanCO2 = document.getElementById('fanCO2Threshold').value;";
-  html += "  const pumpDrought = document.getElementById('pumpDroughtThreshold').value;";
-  html += "  const lightLux = document.getElementById('lightLuxThreshold').value;";
-  html += "  const params = `fanTemp=${fanTemp}&fanCO2=${fanCO2}&pumpDrought=${pumpDrought}&lightLux=${lightLux}`;";
-  html += "  fetch('/setThresholds?' + params)";
-  html += "  .then(response => response.text())";
-  html += "  .then(result => {";
-  html += "    showToast('阈值设置已保存！', 2000);";
-  html += "  })";
-  html += "  .catch(error => {";
-  html += "    console.error('保存阈值失败:', error);";
-  html += "    showToast('保存失败，请重试', 3000);";
-  html += "  });";
-  html += "}";
+  P("function saveThresholds() {");
+  P("  const fanTemp = document.getElementById('fanTempThreshold').value;");
+  P("  const fanCO2 = document.getElementById('fanCO2Threshold').value;");
+  P("  const pumpDrought = document.getElementById('pumpDroughtThreshold').value;");
+  P("  const lightLux = document.getElementById('lightLuxThreshold').value;");
+  P("  const params = `fanTemp=${fanTemp}&fanCO2=${fanCO2}&pumpDrought=${pumpDrought}&lightLux=${lightLux}`;");
+  P("  fetch('/setThresholds?' + params)");
+  P("  .then(response => response.text())");
+  P("  .then(result => {");
+  P("    showToast('阈值设置已保存！', 2000);");
+  P("  })");
+  P("  .catch(error => {");
+  P("    console.error('保存阈值失败:', error);");
+  P("    showToast('保存失败，请重试', 3000);");
+  P("  });");
+  P("}");
   
-  html += "</script>";
-  html += "</body></html>";
+  P("</script>");
+  P("</body></html>");
   
-  request->send(200, "text/html", html);
+  request->send(response);
+  #undef P
 }
 
 void handleData(AsyncWebServerRequest *request) {
+  // 【新增】记录网页端轮询时间，用于判断网页端是否在线
+  lastWebPoll = millis();
+  if (!webClientConnected) {
+    webClientConnected = true;
+    Serial.println("[SD] 网页端已重新连接");
+    if (hasSDCachedData()) {
+      Serial.println("[SD] 检测到缓存数据，网页端可通过 /cachedData 获取");
+    }
+  }
+
   StaticJsonDocument<512> doc;
   
   doc["lightIntensity"] = round(lastLightIntensity);
@@ -1262,7 +1403,7 @@ void handleData(AsyncWebServerRequest *request) {
   doc["dhtHumi"] = lastDhtHumi;
   doc["dhtStatus"] = lastDhtStatus;
   
-  doc["soilAO"] = lastSoilAO;
+  doc["soilAO"] = (lastSoilAO < 0) ? 0 : lastSoilAO;  // 【修复】故障时返回0而不是-1
   doc["soilStatus"] = lastSoilStatus;
   doc["soilDO"] = digitalRead(SOIL_DO_PIN);
   
@@ -1289,6 +1430,9 @@ void handleData(AsyncWebServerRequest *request) {
   // 【新增】光照进度条百分比，由后端计算避免前端硬编码
   int lightProgress = constrain((int)(lastLightIntensity / LUX_MAX * 100), 0, 100);
   doc["lightProgress"] = lightProgress;
+
+  // 【新增】告知网页端是否有离线缓存数据待获取
+  doc["hasCachedData"] = sdCachePending;
   
   // 新增：lastUpdate字段，格式为 YYYY-MM-DD HH:MM:SS
   time_t now = time(nullptr);
@@ -1420,6 +1564,67 @@ void handleGetThresholds(AsyncWebServerRequest *request) {
   request->send(200, "application/json", jsonResponse);
 }
 
+// ==============================================================================
+// 【新增】设置离线缓存间隔（秒）
+// GET /setCacheInterval?interval=10  (范围: 5-3600秒)
+// ==============================================================================
+void handleSetCacheInterval(AsyncWebServerRequest *request) {
+  if (!request->hasArg("interval")) {
+    request->send(400, "application/json", "{\"error\":\"缺少interval参数\"}");
+    return;
+  }
+  
+  long intervalSec = request->arg("interval").toInt();
+  if (intervalSec < 5 || intervalSec > 3600) {
+    request->send(400, "application/json", "{\"error\":\"interval范围: 5-3600秒\"}");
+    return;
+  }
+  
+  cacheWriteInterval = (unsigned long)intervalSec * 1000;
+  preferences.putULong("cacheIntv", cacheWriteInterval);
+  
+  Serial.printf("[SD] 离线缓存间隔已更新: %ld秒\n", intervalSec);
+  
+  StaticJsonDocument<128> doc;
+  doc["success"] = true;
+  doc["cacheInterval"] = intervalSec;
+  String resp;
+  serializeJson(doc, resp);
+  
+  AsyncWebServerResponse *response = request->beginResponse(200, "application/json", resp);
+  response->addHeader("Access-Control-Allow-Origin", "*");
+  request->send(response);
+}
+
+// ==============================================================================
+// 【新增】获取离线缓存间隔和状态
+// GET /getCacheInterval
+// ==============================================================================
+void handleGetCacheInterval(AsyncWebServerRequest *request) {
+  StaticJsonDocument<256> doc;
+  doc["cacheInterval"] = cacheWriteInterval / 1000;  // 返回秒
+  doc["sdCardAvailable"] = sdCardAvailable;
+  doc["webClientConnected"] = webClientConnected;
+  doc["hasCachedData"] = hasSDCachedData();
+  
+  if (sdCardAvailable && SD.exists(SD_CACHE_FILE)) {
+    File f = SD.open(SD_CACHE_FILE, FILE_READ);
+    if (f) {
+      doc["cachedFileSize"] = (unsigned long)f.size();
+      f.close();
+    }
+  } else {
+    doc["cachedFileSize"] = 0;
+  }
+  
+  String resp;
+  serializeJson(doc, resp);
+  
+  AsyncWebServerResponse *response = request->beginResponse(200, "application/json", resp);
+  response->addHeader("Access-Control-Allow-Origin", "*");
+  request->send(response);
+}
+
 void handleNotFound(AsyncWebServerRequest *request) {
   String html = "<!DOCTYPE html><html lang='zh-CN'>";
   html += "<head><meta charset='UTF-8'><title>404 Not Found</title></head>";
@@ -1438,9 +1643,10 @@ void configModeCallback (WiFiManager *myWiFiManager) {
   Serial.println("请连接此WiFi后，在浏览器访问 192.168.4.1");
 }
 
+/* ============================================================================
+// MQTT相关函数（已禁用）
 // ============================================================================
-// 【新增】生成时间戳函数 - 返回当前小时的yyyyMMddHH格式字符串
-// ============================================================================
+
 String generateTimestamp() {
   time_t now = time(nullptr);
   struct tm* timeinfo = localtime(&now);
@@ -1583,26 +1789,18 @@ void ensureMqttConnection() {
   if (now - lastMqttReconnect < mqttReconnectInterval) return;
   lastMqttReconnect = now;
 
+  // 【修复】断开旧的TLS连接，释放内存，防止泄漏
+  mqttClient.disconnect();
+  mqttSecureClient.stop();
+  delay(100);
+
   // 【修改】动态生成clientId和password
-  // 1. 获取当前小时时间戳（yyyyMMddHH格式）
   String timestamp = generateTimestamp();
-  
-  // 2. 构造clientId = deviceId + "_0_0_" + timestamp
   String dynamicClientId = String(mqttDeviceId) + "_0_0_" + timestamp;
-  
-  // 3. 计算password = hex(HMAC-SHA256(secret, timestamp))
   String dynamicPassword = generateMqttPassword(deviceSecret, timestamp);
   
-  // 【调试】打印生成的clientId和password
-  Serial.println("[MQTT] ====== 动态凭证生成 ======");
-  Serial.println("[MQTT] 时间戳: " + timestamp);
-  Serial.println("[MQTT] ClientId: " + dynamicClientId);
-  Serial.println("[MQTT] Password: " + dynamicPassword);
-  Serial.println("[MQTT] Username: " + String(mqttUsername));
-  Serial.println("[MQTT] Host: " + String(mqttHost));
-  Serial.println("[MQTT] Port: " + String(mqttPort));
-  Serial.println("[MQTT] ============================");
-
+  Serial.printf("[MQTT] 时间戳: %s, ClientId: %s\n", timestamp.c_str(), dynamicClientId.c_str());
+  Serial.printf("[MQTT] 空闲堆: %u bytes, 最大块: %u bytes\n", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
   Serial.println("[MQTT] 正在连接IoTDA MQTT Broker...");
   
   // 【修改】使用动态生成的clientId和password进行连接
@@ -1662,6 +1860,169 @@ void publishTelemetry() {
     Serial.println("[MQTT] 遥测上报失败");
   }
 }
+*/ // MQTT相关函数结束
+
+// ==============================================================================
+// 【新增】SD卡初始化函数（带重试和低速模式）
+// ==============================================================================
+bool initSDCard() {
+  // 先确保CS引脚为高电平（取消选中），避免与其他SPI设备冲突
+  pinMode(SD_CS_PIN, OUTPUT);
+  digitalWrite(SD_CS_PIN, HIGH);
+  delay(100);
+
+  // 使用全局SPI实例，避免与OLED等设备的默认SPI冲突
+  spiSD.begin(18, 19, 23, SD_CS_PIN);  // SCK, MISO, MOSI, CS
+
+  // 尝试多次初始化，逐步降低SPI频率
+  const uint32_t frequencies[] = {4000000, 2000000, 1000000, 400000};  // 4M→400K
+  for (int freq = 0; freq < 4; freq++) {
+    Serial.printf("[SD] 尝试初始化... SPI频率: %luHz\n", frequencies[freq]);
+    if (SD.begin(SD_CS_PIN, spiSD, frequencies[freq])) {
+      uint8_t cardType = SD.cardType();
+      if (cardType != CARD_NONE) {
+        Serial.print("[SD] ★ 初始化成功！卡类型: ");
+        if (cardType == CARD_MMC) Serial.println("MMC");
+        else if (cardType == CARD_SD) Serial.println("SDSC");
+        else if (cardType == CARD_SDHC) Serial.println("SDHC");
+        Serial.printf("[SD] 容量: %lluMB, 已用: %lluMB\n", 
+                      SD.totalBytes() / (1024 * 1024), 
+                      SD.usedBytes() / (1024 * 1024));
+        return true;
+      }
+      Serial.println("[SD] SD.begin成功但未检测到卡，重试...");
+      SD.end();
+    }
+    delay(200);
+  }
+
+  Serial.println("【警告】SD卡初始化失败！请检查：");
+  Serial.println("  1. 接线: CS→5, SCK→18, MOSI→23, MISO→19, VCC→5V, GND→GND");
+  Serial.println("  2. SD卡是否已格式化为FAT32");
+  Serial.println("  3. SD卡是否插紧");
+  Serial.println("  4. 模块电源指示灯是否亮");
+  return false;
+}
+
+// ==============================================================================
+// 【新增】将传感器数据缓存到SD卡（JSON Lines格式，每行一条记录）
+// ==============================================================================
+void cacheDataToSD() {
+  if (!sdCardAvailable) return;
+
+  // 【新增】过滤异常数据：所有传感器数据都为0时不缓存
+  if (lastDhtTemp == 0 && lastDhtHumi == 0 && lastSoilAO == 0 && 
+      static_cast<int>(lastLightIntensity) == 0 && lastEco2 == 0) {
+    Serial.println("[SD] 传感器数据全为0，跳过缓存");
+    return;
+  }
+
+  File file = SD.open(SD_CACHE_FILE, FILE_APPEND);
+  if (!file) {
+    Serial.println("[SD] 打开缓存文件失败！");
+    return;
+  }
+
+  // 获取当前时间戳
+  time_t now = time(nullptr);
+  struct tm* timeinfo = localtime(&now);
+  char timeStr[24];
+  snprintf(timeStr, sizeof(timeStr), "%04d-%02d-%02d %02d:%02d:%02d",
+    timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
+    timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+
+  // 构造JSON行
+  StaticJsonDocument<384> doc;
+  doc["ts"] = timeStr;
+  doc["temp"] = lastDhtTemp;
+  doc["humi"] = lastDhtHumi;
+  doc["soil"] = lastSoilAO;
+  doc["lightLux"] = static_cast<int>(lastLightIntensity);
+  doc["eco2"] = lastEco2;
+  doc["tvoc"] = lastTvoc;
+  doc["pump"] = pumpState;
+  doc["fan"] = fanState;
+  doc["light"] = lightState;
+  doc["manual"] = manualControl;
+
+  String line;
+  serializeJson(doc, line);
+  file.println(line);
+  file.close();
+  sdCachePending = true;
+
+  Serial.println("[SD] 数据已缓存: " + String(timeStr));
+}
+
+// ==============================================================================
+// 【新增】检查SD卡是否存在缓存数据
+// ==============================================================================
+bool hasSDCachedData() {
+  if (!sdCardAvailable) return false;
+  if (sdCachePending) return true;
+
+  sdCachePending = SD.exists(SD_CACHE_FILE);
+  return sdCachePending;
+}
+
+// ==============================================================================
+// 【新增】HTTP接口 - 返回SD卡中的所有缓存数据并清除缓存文件
+// 网页端重连后调用 GET /cachedData 获取断连期间的历史数据
+// 返回JSON数组，每个元素包含时间戳和传感器数据
+// ==============================================================================
+void handleCachedData(AsyncWebServerRequest *request) {
+  // 更新轮询时间（说明网页端在线）
+  lastWebPoll = millis();
+  webClientConnected = true;
+
+  if (!sdCardAvailable || !SD.exists(SD_CACHE_FILE)) {
+    // 无缓存数据，返回空数组
+    sdCachePending = false;
+    request->send(200, "application/json", "{\"cached\":[]}");
+    return;
+  }
+
+  File file = SD.open(SD_CACHE_FILE, FILE_READ);
+  if (!file) {
+    request->send(500, "application/json", "{\"error\":\"无法读取缓存文件\"}");
+    return;
+  }
+
+  // 构造JSON数组响应（使用流式输出避免内存溢出）
+  AsyncResponseStream *resp = request->beginResponseStream("application/json");
+  resp->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  resp->addHeader("Access-Control-Allow-Origin", "*");
+  resp->print("{\"cached\":[");
+  bool first = true;
+  int count = 0;
+  const int MAX_CACHE_ITEMS = 500;  // 限制最大返回条数
+
+  while (file.available() && count < MAX_CACHE_ITEMS) {
+    String line = file.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0) continue;
+
+    // 验证JSON格式有效
+    StaticJsonDocument<384> testDoc;
+    DeserializationError err = deserializeJson(testDoc, line);
+    if (err) continue;
+
+    if (!first) resp->print(",");
+    resp->print(line);
+    first = false;
+    count++;
+  }
+  file.close();
+
+  resp->print("]}");
+
+  // 删除缓存文件（数据已被取走）
+  SD.remove(SD_CACHE_FILE);
+  sdCachePending = false;
+  Serial.printf("[SD] ★ 网页端取走 %d 条缓存数据，缓存文件已清除\n", count);
+
+  request->send(resp);
+}
 
 // ==============================================================================
 // 初始化函数
@@ -1677,6 +2038,11 @@ void setup() {
   pinMode(SOIL_AO_PIN, INPUT);
   pinMode(SOIL_DO_PIN, INPUT);
 
+  // 【关键】配置ADC衰减，扩展测量范围到0-3.3V
+  // 默认0db只能测0-1.1V，会导致读数饱和为4095触发故障检测
+  analogSetPinAttenuation(SOIL_AO_PIN, ADC_11db);  // 土壤传感器AO
+  analogSetPinAttenuation(LIGHT_AO_PIN, ADC_11db); // 光照传感器AO
+
   pinMode(PUMP_PIN, OUTPUT);
   pinMode(PUMP_PIN2, OUTPUT);
   pinMode(FAN_PIN, OUTPUT);
@@ -1688,8 +2054,42 @@ void setup() {
   digitalWrite(FAN_PIN2, LOW);
   digitalWrite(LIGHT_LAMP_PIN, LOW);
 
+  // 【诊断】检测OLED I2C地址
+  Serial.println("\n===== OLED屏幕诊断 =====");
+  uint8_t oledAddr = 0;
+  for (uint8_t addr = 0x3C; addr <= 0x3D; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      oledAddr = addr;
+      Serial.print("找到OLED，I2C地址: 0x");
+      Serial.println(addr, HEX);
+      break;
+    }
+  }
+  if (oledAddr == 0) {
+    Serial.println("未检测到OLED！请检查：");
+    Serial.println("  1. VCC是否接3.3V或5V");
+    Serial.println("  2. GND是否接地");
+    Serial.println("  3. SDA是否接GPIO21");
+    Serial.println("  4. SCL是否接GPIO22");
+    Serial.println("  5. 模块是否损坏");
+  } else if (oledAddr == 0x3D) {
+    Serial.println("OLED使用非默认地址0x3D，已自动设置");
+    u8g2.setI2CAddress(0x3D * 2);
+  }
+  Serial.println("========================\n");
+
   u8g2.begin();
   u8g2.enableUTF8Print();
+
+  // 【诊断】OLED初始化后测试显示
+  u8g2.clearBuffer();
+  u8g2.setFont(u8g2_font_wqy12_t_gb2312);
+  u8g2.setCursor(20, 35);
+  u8g2.print("OLED 初始化成功");
+  u8g2.sendBuffer();
+  Serial.println("OLED测试画面已发送");
+  delay(1500);
 
   // 【新增】从Flash加载持久化的阈值设置
   preferences.begin("thresholds", false);
@@ -1697,13 +2097,21 @@ void setup() {
   fanCO2Threshold = preferences.getInt("fanCO2", 1000);          // 默认1000ppm
   pumpDroughtThreshold = preferences.getInt("pumpDrought", 3200); // 默认3200
   lightLuxThreshold = preferences.getInt("lightLux", 800);        // 默认800lux
+  cacheWriteInterval = preferences.getULong("cacheIntv", 10000);  // 默认10秒
   Serial.println("已从Flash加载阈值设置:");
   Serial.print("  风扇温度阈值: "); Serial.println(fanTempThreshold);
   Serial.print("  风扇CO2阈值: "); Serial.println(fanCO2Threshold);
   Serial.print("  水泵干旱阈值: "); Serial.println(pumpDroughtThreshold);
   Serial.print("  灯泡光照阈值(lux): "); Serial.println(lightLuxThreshold);
+  Serial.print("  离线缓存间隔: "); Serial.print(cacheWriteInterval / 1000); Serial.println("秒");
 
   i2cScan();
+
+  // 【新增】初始化SD卡
+  sdCardAvailable = initSDCard();
+  if (sdCardAvailable && hasSDCachedData()) {
+    Serial.println("[SD] 检测到历史缓存数据");
+  }
 
   if (sgp30Available) {
     sgp30Available = sgp30Init();
@@ -1746,42 +2154,35 @@ void setup() {
   Serial.println(WiFi.localIP());
   Serial.println("====================================");
 
-  // NTP时间同步，设置中国时区
-  // 【修改】加强NTP同步，确保时间准确（华为云IoTDA对时间戳有严格要求）
+  // NTP时间同步（MQTT已禁用，但保留时间同步用于SD卡缓存时间戳）
   configTime(8 * 3600, 0, "ntp.aliyun.com", "ntp1.aliyun.com", "pool.ntp.org");
-  Serial.println("正在同步网络时间（华为云IoTDA需要准确时间）...");
+  Serial.println("正在同步网络时间...");
   int retry = 0;
-  const int maxRetry = 40;  // 【修改】增加重试次数，最多等待20秒
+  const int maxRetry = 20;
   time_t now = time(nullptr);
-  while ((now < 1672531200) && (retry < maxRetry)) { // 2023-01-01 00:00:00
+  while ((now < 1672531200) && (retry < maxRetry)) {
     delay(500);
     now = time(nullptr);
     retry++;
-    if (retry % 4 == 0) {
-      Serial.print(".");
-    }
   }
-  Serial.println();
-  if (now < 1672531200) {
-    Serial.println("【警告】NTP时间同步失败！MQTT连接可能会失败！");
-  } else {
+  if (now >= 1672531200) {
     struct tm* timeinfo = localtime(&now);
     Serial.printf("当前时间: %04d-%02d-%02d %02d:%02d:%02d\n", timeinfo->tm_year+1900, timeinfo->tm_mon+1, timeinfo->tm_mday, timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
-    Serial.println("NTP时间同步成功！");
+  } else {
+    Serial.println("NTP时间同步失败");
   }
 
-  // 【修改】设置MQTT超时和缓冲区
-  mqttSecureClient.setInsecure();  // 跳过证书验证
-  mqttSecureClient.setTimeout(15); // 设置15秒超时
+  /* MQTT已禁用
+  mqttSecureClient.setInsecure();
+  mqttSecureClient.setTimeout(15);
   mqttClient.setServer(mqttHost, mqttPort);
   mqttClient.setCallback(mqttCallback);
   mqttClient.setBufferSize(1024);
-  mqttClient.setSocketTimeout(15);  // 【新增】设置socket超时
-  mqttClient.setKeepAlive(120);     // 【新增】设置心跳间隔120秒
-  
-  // 延迟一下再连接MQTT，确保网络稳定
+  mqttClient.setSocketTimeout(15);
+  mqttClient.setKeepAlive(120);
   delay(1000);
   ensureMqttConnection();
+  */
 
   server.on("/", HTTP_GET, handleRoot);
   server.on("/data", HTTP_GET, handleData);
@@ -1791,6 +2192,9 @@ void setup() {
   server.on("/mode", HTTP_GET, handleModeControl);
   server.on("/setThresholds", HTTP_GET, handleSetThresholds);
   server.on("/getThresholds", HTTP_GET, handleGetThresholds);
+  server.on("/cachedData", HTTP_GET, handleCachedData);  // 【新增】获取离线缓存数据
+  server.on("/setCacheInterval", HTTP_GET, handleSetCacheInterval);  // 【新增】设置缓存间隔
+  server.on("/getCacheInterval", HTTP_GET, handleGetCacheInterval);  // 【新增】获取缓存间隔
   server.onNotFound(handleNotFound);
 
   server.begin();
@@ -1813,14 +2217,117 @@ void setup() {
 // ==============================================================================
 void loop() {
   static unsigned long lastReadTime = 0;
+  static unsigned long lastHeapCheck = 0;
   unsigned long currentTime = millis();
 
+  // 【修复】堆内存监控 - 每10秒检查一次，低于阈值时警告
+  if (currentTime - lastHeapCheck >= 10000) {
+    lastHeapCheck = currentTime;
+    uint32_t freeHeap = ESP.getFreeHeap();
+    if (freeHeap < 30000) {
+      Serial.printf("【警告】堆内存不足！剩余: %u bytes，最大块: %u bytes\n", freeHeap, ESP.getMaxAllocHeap());
+    }
+  }
+
+  // 【新增】实时诊断模式 - 输入"s"进行土壤传感器快速诊断
+  if (Serial.available()) {
+    char cmd = Serial.read();
+    if (cmd == 's' || cmd == 'S') {
+      Serial.println("\n╔════════════════════════════════════════╗");
+      Serial.println("║   【土壤传感器完整诊断模式】             ║");
+      Serial.println("║        AO→GPIO35  DO→GPIO16              ║");
+      Serial.println("╚════════════════════════════════════════╝");
+
+      int minAO = 5000, maxAO = 0;
+      int doCount_0 = 0, doCount_1 = 0;
+
+      for (int i = 0; i < 20; i++) {
+        int rawAO = analogRead(SOIL_AO_PIN);
+        int doPin = digitalRead(SOIL_DO_PIN);
+
+        minAO = min(minAO, rawAO);
+        maxAO = max(maxAO, rawAO);
+        if (doPin == 0) doCount_0++;
+        else doCount_1++;
+
+        Serial.printf("[%2d] AO=%4d DO=%d ", i+1, rawAO, doPin);
+
+        // 状态判断
+        if (rawAO >= 4090) {
+          Serial.println("【异常高-悬空】");
+        } else if (rawAO <= 10) {
+          Serial.println("【异常低-短路】");
+        } else if (rawAO <= 2200) {
+          Serial.println(" → 过湿");
+        } else if (rawAO <= 2800) {
+          Serial.println(" → 正常");
+        } else if (rawAO <= 3200) {
+          Serial.println(" → 轻旱");
+        } else if (rawAO <= 3500) {
+          Serial.println(" → 中旱");
+        } else {
+          Serial.println(" → 重旱");
+        }
+
+        delay(150);
+      }
+
+      Serial.println("\n【诊断结果统计】");
+      Serial.printf("  AO范围: %d ~ %d (变化: %d)\n", minAO, maxAO, maxAO - minAO);
+      Serial.printf("  DO值: %d次为0(干)  %d次为1(湿)\n", doCount_0, doCount_1);
+
+      if (minAO >= 4090 || maxAO >= 4090) {
+        Serial.println("\n⚠️  【故障】AO发现4090+ → GPIO35接线断开或传感器未供电");
+      } else if (maxAO <= 10) {
+        Serial.println("\n⚠️  【故障】AO发现0~10 → GPIO35接GND短路或传感器坏");
+      } else if ((maxAO - minAO) < 50) {
+        Serial.println("\n⚠️  【异常】AO变化<50 → 可能接线接触不良");
+      } else {
+        Serial.println("\n✓ 【正常】AO值在合理范围内, 传感器工作正常");
+      }
+
+      Serial.println("\n【DO口单独诊断】");
+      if (doCount_0 > 15) {
+        Serial.println("  DO持续为0(干旱) → 需要浇水 或 DO接线问题");
+      } else if (doCount_1 > 15) {
+        Serial.println("  DO持续为1(潮湿) → 土壤过湿 或 DO阈值设置太低");
+      } else if (doCount_0 > 0 && doCount_1 > 0) {
+        Serial.println("  DO值在变化 → 工作正常");
+      }
+
+      Serial.println("\n═══════════════════════════════════════\n");
+    }
+  }
+
+  /* MQTT已禁用
   ensureMqttConnection();
   mqttClient.loop();
 
   if (mqttClient.connected() && currentTime - lastMqttPublish >= mqttPublishInterval) {
     lastMqttPublish = currentTime;
     publishTelemetry();
+  }
+  */
+
+  // ==============================================================================
+  // 【新增】SD卡离线缓存逻辑（检测网页端是否在轮询）
+  // ==============================================================================
+  // 判断网页端是否断连：超过60秒没有轮询/data接口
+  // 注意：lastWebPoll 由异步回调（Core 0）更新，需要先缓存再比较，防止unsigned溢出
+  unsigned long cachedLastWebPoll = lastWebPoll;
+  if (cachedLastWebPoll > 0 && currentTime >= cachedLastWebPoll && currentTime - cachedLastWebPoll > webDisconnectTimeout) {
+    if (webClientConnected) {
+      webClientConnected = false;
+      Serial.println("[SD] 网页端已断连，开始缓存数据到SD卡...");
+    }
+  }
+
+  // 网页端离线时（包括开机后从未连接），定期将数据缓存到SD卡
+  if (!webClientConnected) {
+    if (sdCardAvailable && currentTime - lastCacheWrite >= cacheWriteInterval) {
+      lastCacheWrite = currentTime;
+      cacheDataToSD();
+    }
   }
 
   // 处理水泵/风扇的延迟启动（非阻塞）
@@ -1842,10 +2349,19 @@ void loop() {
       updateDhtStatus(lastDhtTemp, lastDhtHumi, lastDhtStatus);
     }
 
-    int soilAO = analogRead(SOIL_AO_PIN);
-    if (soilAO != lastSoilAO) {
-            lastSoilAO = soilAO;
-      updateSoilStatus(soilAO, lastSoilStatus);
+    int soilAO = readSoilSensorRaw();  // 【修复】使用多采样平均读取
+    int soilDO = digitalRead(SOIL_DO_PIN);  // 【修复】实时读取DO值
+
+    // 【调试模式】直接显示原始ADC值，跳过故障检测
+    lastSoilAO = soilAO;  // 直接使用原始值
+    lastSoilDO = soilDO;
+    updateSoilStatus(soilAO, lastSoilStatus);
+
+    // 串口输出原始值便于调试
+    static unsigned long lastDebugPrint = 0;
+    if (millis() - lastDebugPrint > 2000) {  // 每2秒打印一次
+      Serial.printf("[调试] 土壤原始ADC=%d, DO=%d\n", soilAO, soilDO);
+      lastDebugPrint = millis();
     }
 
     // 读取SGP30数据
@@ -1886,7 +2402,8 @@ void loop() {
     if (currentTime - lastSerialPrintTime >= SERIAL_PRINT_INTERVAL) {
       lastSerialPrintTime = currentTime;
       Serial.println("\n====================================");
-      Serial.println(String("传感器数据更新 - ") + String(millis()/1000) + "秒");
+      Serial.printf("传感器数据更新 - %lu秒\n", millis()/1000);
+      Serial.printf("空闲堆内存: %u bytes, 最大可分配块: %u bytes\n", ESP.getFreeHeap(), ESP.getMaxAllocHeap());
       Serial.println("====================================");
       Serial.print("光照强度: ");
       Serial.print(lastLightIntensity, 0);
@@ -1907,8 +2424,15 @@ void loop() {
       Serial.print("温湿度状态: ");
       Serial.println(lastDhtStatus);
       
+
       Serial.print("土壤湿度AO值: ");
-      Serial.println(lastSoilAO);
+      if (soilSensorError) {
+        Serial.println("【故障】");
+        Serial.printf("⚠️  原始值=%d  DO=%d  (传感器异常,检查AO/GND接线)\n",
+          readSoilSensorRaw(), digitalRead(SOIL_DO_PIN));
+      } else {
+        Serial.printf("%d  (DO=%d)\n", lastSoilAO, lastSoilDO);
+      }
       Serial.print("土壤湿度状态: ");
       Serial.println(lastSoilStatus);
       Serial.print("土壤DO值: ");
@@ -1916,7 +2440,7 @@ void loop() {
       
       if (sgp30Available) {
         if (millis() - sgp30WarmUpStart < SGP30_WARM_UP_TIME) {
-          Serial.println(String("SGP30: 预热中（剩余") + String((SGP30_WARM_UP_TIME - (millis() - sgp30WarmUpStart))/1000) + "秒）");
+          Serial.printf("SGP30: 预热中（剩余%lu秒）\n", (SGP30_WARM_UP_TIME - (millis() - sgp30WarmUpStart))/1000);
         } else {
           Serial.print("eCO₂: ");
           Serial.print(lastEco2);
@@ -1938,6 +2462,24 @@ void loop() {
       Serial.println(fanState ? "开启" : "关闭");
       Serial.print("照明灯状态: ");
       Serial.println(lightState ? "开启" : "关闭");
+      Serial.println("------------------------------------");
+      Serial.print("SD卡状态: ");
+      Serial.println(sdCardAvailable ? "正常" : "未连接");
+      if (sdCardAvailable) {
+        Serial.printf("SD卡容量: %lluMB, 已用: %lluMB\n", SD.totalBytes() / (1024 * 1024), SD.usedBytes() / (1024 * 1024));
+        Serial.print("离线缓存: ");
+        if (SD.exists(SD_CACHE_FILE)) {
+          File f = SD.open(SD_CACHE_FILE, FILE_READ);
+          if (f) {
+            Serial.printf("有缓存数据 (%lu 字节)\n", (unsigned long)f.size());
+            f.close();
+          }
+        } else {
+          Serial.println("无缓存");
+        }
+      }
+      Serial.print("网页端状态: ");
+      Serial.println(webClientConnected ? "在线" : "离线");
       Serial.println("====================================\n");
     }
   }

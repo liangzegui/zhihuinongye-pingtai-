@@ -32,9 +32,24 @@ public class RealTimeController {
             // 首选直接读取ESP32设备数据
             Map<String, Object> data = esp32BridgeService.fetchData();
             if (data != null && !data.isEmpty()) {
+                // 检查ESP32是否有断连期间的缓存数据
+                if (Boolean.TRUE.equals(data.get("hasCachedData"))) {
+                    logger.info("检测到ESP32存在断连缓存数据，开始拉取...");
+                    esp32BridgeService.fetchCachedData();
+                }
+
                 EnvDataDTO dto = mapToDto(data);
                 dto.setDataSource("device"); // 标记数据来源为设备
                 dto.setIsRealTime(true); // 标记为实时数据
+
+                // 消费待通知的缓存数据条数（确保前端只收到一次通知）
+                int cachedCount = esp32BridgeService.consumePendingCachedCount();
+                if (cachedCount > 0) {
+                    dto.setHasCachedData(true);
+                    dto.setCachedDataCount(cachedCount);
+                    logger.info("通知前端：已恢复 {} 条断连缓存数据", cachedCount);
+                }
+
                 logger.debug("成功获取ESP32数据: {}", dto);
                 return Result.success(Collections.singletonList(dto));
             }

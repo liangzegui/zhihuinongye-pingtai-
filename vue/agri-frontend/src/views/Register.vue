@@ -25,10 +25,9 @@
               id="reg-username" 
               type="text" 
               v-model.trim="username" 
-              placeholder=" " 
+              placeholder="请设置用户名" 
               class="form-input"
             />
-            <label for="reg-username" class="floating-label">请设置用户名</label>
           </div>
         </div>
         
@@ -40,10 +39,9 @@
               id="reg-password" 
               :type="showPassword ? 'text' : 'password'" 
               v-model="password" 
-              placeholder=" " 
+              placeholder="请设置密码（至少6位）" 
               class="form-input"
             />
-            <label for="reg-password" class="floating-label">请设置密码（至少6位）</label>
             <button 
               type="button" 
               class="toggle-btn" 
@@ -63,10 +61,9 @@
               id="reg-confirm-password" 
               :type="showPassword ? 'text' : 'password'" 
               v-model="confirmPassword" 
-              placeholder=" " 
+              placeholder="请再次输入密码" 
               class="form-input"
             />
-            <label for="reg-confirm-password" class="floating-label">请再次输入密码</label>
           </div>
         </div>
         
@@ -78,10 +75,9 @@
               id="captcha" 
               type="text" 
               v-model="captcha" 
-              placeholder=" " 
+              placeholder="请输入验证码" 
               class="form-input"
             />
-            <label for="captcha" class="floating-label">请输入验证码</label>
             <!-- 验证码图片（点击刷新） -->
             <img 
               :src="captchaUrl" 
@@ -593,29 +589,6 @@ export default {
 .eye-icon {
   font-size: 18px;
   font-style: normal;
-}
-
-/* 浮动标签样式 */
-.floating-label {
-  position: absolute;
-  left: 48px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: #94a3b8;
-  font-size: 14px;
-  pointer-events: none;
-  transition: all 0.2s ease;
-  background: transparent;
-  padding: 0 6px;
-}
-
-/* 输入框有内容或聚焦时，标签缩小上移 */
-.form-input:focus + .floating-label,
-.form-input:not(:placeholder-shown) + .floating-label {
-  top: 0;
-  font-size: 12px;
-  color: #3a7d44;
-  background: white;
 }
 
 /* 密码切换按钮 */

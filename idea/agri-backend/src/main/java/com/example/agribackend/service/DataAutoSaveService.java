@@ -19,17 +19,12 @@ import java.util.concurrent.atomic.AtomicLong;
 @Service
 public class DataAutoSaveService {
     private static final Logger logger = LoggerFactory.getLogger(DataAutoSaveService.class);
-    // IoTDA数据新鲜度窗口：5分钟
-    private static final long IOTDA_FRESH_WINDOW_MILLIS = 5 * 60 * 1000L;
 
     @Autowired
     private EnvDataMapper envDataMapper;
 
     @Autowired
     private Esp32BridgeService esp32BridgeService;
-
-    @Autowired
-    private IoTDAService iotDAService;
 
     // 是否启用自动保存（默认关闭，需要用户在管理员中心手动开启）
     private AtomicBoolean enabled = new AtomicBoolean(false);
@@ -81,7 +76,7 @@ public class DataAutoSaveService {
 
     /**
      * 从实时数据获取并保存到数据库（可指定保存人）
-     * 优先从ESP32直连获取实时数据，兜底从IoTDA缓存读取
+     * 从ESP32直连获取实时数据
      */
     private boolean saveDataFromRealTime(String saveUsername) {
         try {
@@ -92,6 +87,8 @@ public class DataAutoSaveService {
             } catch (Exception e) {
                 logger.warn("[数据保存] ESP32直连获取数据失败: {}", e.getMessage());
             }
+
+            // 缓存数据检测已统一由 RealTimeController 处理，此处不再重复触发
 
             EnvDataEntity entity = new EnvDataEntity();
             entity.setSensorId(DEFAULT_SENSOR_ID);
@@ -119,21 +116,8 @@ public class DataAutoSaveService {
 
                 logger.info("[数据保存] 使用ESP32直连数据");
             } else {
-                // 兜底通道2：从IoTDA缓存获取（缓存key已标准化）
-                Map<String, Object> cachedData = iotDAService.getCachedSensorData();
-                if (cachedData == null || cachedData.isEmpty()) {
-                    logger.warn("[数据保存] ESP32和IoTDA均无有效数据，跳过保存");
-                    return false;
-                }
-
-                entity.setTemperature(getDoubleValue(cachedData, "temperature"));
-                entity.setHumidity(getDoubleValue(cachedData, "humidity"));
-                entity.setSoilMoisture(getDoubleValue(cachedData, "soilMoisture"));
-                entity.setSoilAdc(getIntegerValue(cachedData, "soilAdc"));
-                entity.setLightIntensity(getIntegerValue(cachedData, "lightIntensity"));
-                entity.setCo2(getIntegerValue(cachedData, "co2"));
-
-                logger.info("[数据保存] 使用IoTDA缓存数据");
+                logger.warn("[数据保存] ESP32无有效数据，跳过保存");
+                return false;
             }
 
             entity.setSaveUsername(saveUsername);
@@ -417,53 +401,10 @@ public class DataAutoSaveService {
      */
     private boolean isDeviceOnline() {
         try {
-            // 通道1：本地ESP32直连
-            if (esp32BridgeService.testConnection()) {
-                return true;
-            }
-
-            // 通道2：IoTDA在线且数据为近期上报
-            Map<String, Object> deviceStatus = iotDAService.getDeviceStatus();
-            boolean iotOnline = parseBoolean(deviceStatus != null ? deviceStatus.get("online") : null);
-            long lastUpdate = parseLong(deviceStatus != null ? deviceStatus.get("lastUpdate") : null, 0L);
-            boolean isFresh = lastUpdate > 0 && (System.currentTimeMillis() - lastUpdate) <= IOTDA_FRESH_WINDOW_MILLIS;
-
-            if (iotOnline && isFresh) {
-                return true;
-            }
-
-            logger.warn("[数据保存] 在线检查未通过：本地离线，IoTDA在线={}, 数据新鲜={}", iotOnline, isFresh);
-            return false;
+            return esp32BridgeService.testConnection();
         } catch (Exception e) {
             logger.warn("[数据保存] 设备在线状态检查失败: {}", e.getMessage());
             return false;
-        }
-    }
-
-    private boolean parseBoolean(Object value) {
-        if (value == null) {
-            return false;
-        }
-        if (value instanceof Boolean) {
-            return (Boolean) value;
-        }
-        if (value instanceof Number) {
-            return ((Number) value).intValue() != 0;
-        }
-        return Boolean.parseBoolean(String.valueOf(value));
-    }
-
-    private long parseLong(Object value, long defaultValue) {
-        if (value == null) {
-            return defaultValue;
-        }
-        if (value instanceof Number) {
-            return ((Number) value).longValue();
-        }
-        try {
-            return Long.parseLong(String.valueOf(value));
-        } catch (Exception e) {
-            return defaultValue;
         }
     }
 }

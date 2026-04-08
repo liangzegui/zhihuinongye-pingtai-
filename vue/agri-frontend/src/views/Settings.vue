@@ -15,6 +15,10 @@
         <DataAutoSaveConfig />
       </el-tab-pane>
       
+      <el-tab-pane label="离线缓存" name="cache">
+        <CacheConfig />
+      </el-tab-pane>
+      
       <el-tab-pane label="预警阈值" name="warning-rules">
         <WarningRuleConfig />
       </el-tab-pane>
@@ -31,6 +35,7 @@
 import { Setting } from '@element-plus/icons-vue';
 import Esp32Config from '@/components/Esp32Config.vue';
 import DataAutoSaveConfig from '@/components/DataAutoSaveConfig.vue';
+import CacheConfig from '@/components/CacheConfig.vue';
 import WarningRuleConfig from '@/components/WarningRuleConfig.vue';
 import ExceptionConfig from '@/components/ExceptionConfig.vue';
 
@@ -40,6 +45,7 @@ export default {
     Setting,
     Esp32Config,
     DataAutoSaveConfig,
+    CacheConfig,
     WarningRuleConfig,
     ExceptionConfig
   },

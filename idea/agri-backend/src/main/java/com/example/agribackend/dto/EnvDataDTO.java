@@ -17,4 +17,8 @@ public class EnvDataDTO {
     private String dataSource; // "device" = ESP32设备实时数据, "database" = 数据库历史数据
     private Boolean isRealTime; // true = 实时数据, false = 历史数据
     private String collectTime; // 数据采集时间
+
+    // 断连缓存数据通知
+    private Boolean hasCachedData; // ESP32是否刚恢复了缓存数据
+    private Integer cachedDataCount; // 恢复的缓存数据条数
 }

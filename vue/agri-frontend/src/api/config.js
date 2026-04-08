@@ -54,3 +54,20 @@ export const triggerSaveData = () => {
 export const saveEnvData = (data) => {
   return request.post('/api/config/autosave/save', data);
 };
+
+// ==================== 离线缓存间隔配置 ====================
+
+/**
+ * 获取ESP32离线缓存间隔配置及SD卡状态
+ */
+export const getCacheInterval = () => {
+  return request.get('/api/config/cacheInterval');
+};
+
+/**
+ * 设置ESP32离线缓存间隔
+ * @param {number} interval - 缓存间隔秒数(5-3600)
+ */
+export const setCacheInterval = (interval) => {
+  return request.post('/api/config/cacheInterval', { interval });
+};

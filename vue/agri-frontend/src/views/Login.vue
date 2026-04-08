@@ -19,10 +19,9 @@
               id="username" 
               type="text" 
               v-model.trim="username" 
-              placeholder=" " 
+              placeholder="请输入用户名" 
               class="form-input"
             />
-            <label for="username" class="floating-label">请输入用户名</label>
           </div>
         </div>
         <div class="form-item">
@@ -32,10 +31,9 @@
               id="password" 
               :type="showPassword ? 'text' : 'password'" 
               v-model="password" 
-              placeholder=" " 
+              placeholder="请输入密码" 
               class="form-input"
             />
-            <label for="password" class="floating-label">请输入密码</label>
             <button 
               type="button" 
               class="toggle-btn" 
@@ -408,29 +406,6 @@ export default {
   font-size: 18px;
   font-style: normal;
   line-height: 1;
-}
-
-/* 浮动标签样式 */
-.floating-label {
-  position: absolute;
-  left: 48px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: #94a3b8;
-  font-size: 14px;
-  pointer-events: none;
-  transition: all 0.2s ease;
-  background: transparent;
-  padding: 0 6px;
-}
-
-/* 输入框有内容或聚焦时，标签缩小上移 */
-.form-input:focus + .floating-label,
-.form-input:not(:placeholder-shown) + .floating-label {
-  top: 0;
-  font-size: 12px;
-  color: #3a7d44;
-  background: white;
 }
 
 .toggle-btn {
